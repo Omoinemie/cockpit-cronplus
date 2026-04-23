@@ -1,57 +1,27 @@
-name: Build & Release
-
-on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: 'Confirm build?'
-        required: true
-        type: boolean
-        default: false
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Confirm
-        if: ${{ !inputs.confirm }}
-        run: |
-          echo "ERROR: You must confirm the build"
-          exit 1
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-
       - name: Build
         run: bash build-deb.sh
 
       - name: Get version
         id: ver
         run: |
+          # 直接读取构建脚本运行完后的 VERSION 文件（它已经是最新自增后的版本了）
           NEXT="$(cat VERSION | tr -d '[:space:]')"
-          MAJOR="$(echo "$NEXT" | cut -d. -f1)"
-          MINOR="$(echo "$NEXT" | cut -d. -f2)"
-          PATCH="$(echo "$NEXT" | cut -d. -f3)"
-          BUILT="${MAJOR}.${MINOR}.$((PATCH-1))"
-          echo "v=${BUILT}" >> "$GITHUB_OUTPUT"
+          echo "v=${NEXT}" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.v }}
           name: v${{ steps.ver.outputs.v }}
+          # 使用通配符，避免因为版本号计算错误导致找不到文件
           files: |
-            cronplus_${{ steps.ver.outputs.v }}_all.deb
-            cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
+            cronplus_*.deb
+            cockpit-cronplus_*.deb
           body: |
             ## cockpit-cronplus v${{ steps.ver.outputs.v }}
 
             ```bash
+            # 这里的安装指令也可以使用生成的版本号
             sudo dpkg -i cronplus_${{ steps.ver.outputs.v }}_all.deb
             sudo dpkg -i cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
             ```
@@ -60,6 +30,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 建议把生成的 .deb 从 git 提交中排除（它们已经在 Release 里了），只提交版本号变更
+          # 如果你一定要存入仓库，保留下面这一行：
           git add *.deb VERSION daemon/src/version.py webui/manifest.json
           git diff --quiet && git diff --staged --quiet || git commit -m "Build version $(cat VERSION)"
           git push
