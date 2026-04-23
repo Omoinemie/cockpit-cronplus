@@ -16,7 +16,7 @@ import (
 	"cronplus/pkg/model"
 )
 
-const version = "2.0.7"
+var version = "2.0.7"
 
 func main() {
 	confPath := flag.String("conf", store.DefaultConfFile, "Config file path")

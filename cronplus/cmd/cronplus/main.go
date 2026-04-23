@@ -17,7 +17,7 @@ import (
 	"cronplus/pkg/model"
 )
 
-const version = "2.0.7"
+var version = "2.0.7"
 const serviceName = "cronplus.service"
 
 func main() {

@@ -4,8 +4,8 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC="$DIR/cronplus"
 
-# ── 1. 严格从文件读取版本 ──
-VERSION=$(cat "$DIR/VERSION" 2>/dev/null | tr -d '[:space:]')
+# ── 1. 严格从文件或环境变量读取版本 ──
+VERSION="${VERSION:-$(cat "$DIR/VERSION" 2>/dev/null | tr -d '[:space:]')}"
 if [ -z "$VERSION" ]; then
     echo "ERROR: VERSION file not found or empty. Please create a VERSION file."
     exit 1
