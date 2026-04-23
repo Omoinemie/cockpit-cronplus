@@ -153,9 +153,7 @@ chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN
 chmod 755 "${PKGDIR}/usr/bin/cronplus"
 
 dpkg-deb --build --root-owner-group "${PKGDIR}"
-if [ ! -f "${DIR}/${PKGDIR}.deb" ]; then
-    mv "${PKGDIR}.deb" "${DIR}/"
-fi
+echo "Built: ${DIR}/${PKGDIR}.deb ($(du -h "${DIR}/${PKGDIR}.deb" | cut -f1))"
 rm -rf "${PKGDIR}"
 
 # ──────────────────────────────────────────
@@ -216,7 +214,7 @@ find "${PKGDIR}" -type f -exec chmod 644 {} \;
 chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN/postrm"
 
 dpkg-deb --build --root-owner-group "${PKGDIR}"
-mv "${PKGDIR}.deb" "${DIR}/"
+echo "Built: ${DIR}/${PKGDIR}.deb ($(du -h "${DIR}/${PKGDIR}.deb" | cut -f1))"
 rm -rf "${PKGDIR}"
 
 echo ""
