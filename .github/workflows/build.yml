@@ -1,18 +1,12 @@
-name: Build Deb Packages
+name: Build & Release
 
 on:
   workflow_dispatch:
     inputs:
-      bump:
-        description: 'Version bump type'
-        required: false
-        default: 'patch'
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-          - none
+      confirm:
+        description: 'Type YES to confirm build'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -23,67 +17,53 @@ jobs:
     defaults:
       run:
         working-directory: cockpit-cronplus
+
     steps:
+      - name: Confirm
+        if: github.event.inputs.confirm != 'YES'
+        run: |
+          echo "ERROR: You must type YES to confirm"
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install dpkg-deb
         run: sudo apt-get update && sudo apt-get install -y dpkg-deb
 
-      - name: Bump version
-        if: github.event.inputs.bump != 'none'
-        run: |
-          VERSION="$(cat VERSION | tr -d '[:space:]')"
-          MAJOR="$(echo "${VERSION}" | cut -d. -f1)"
-          MINOR="$(echo "${VERSION}" | cut -d. -f2)"
-          PATCH="$(echo "${VERSION}" | cut -d. -f3)"
-
-          case "${{ github.event.inputs.bump }}" in
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            *)     PATCH=$((PATCH + 1)) ;;
-          esac
-
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "${NEW_VERSION}" > VERSION
-          echo "Bumped to: ${NEW_VERSION}"
-
-      - name: Build packages
+      - name: Build
         run: bash build-deb.sh
 
-      - name: Read built version
-        id: built
+      - name: Get version
+        id: ver
         run: |
           NEXT="$(cat VERSION | tr -d '[:space:]')"
-          MAJOR="$(echo "${NEXT}" | cut -d. -f1)"
-          MINOR="$(echo "${NEXT}" | cut -d. -f2)"
-          PATCH="$(echo "${NEXT}" | cut -d. -f3)"
-          BUILT="${MAJOR}.${MINOR}.$((PATCH - 1))"
-          echo "version=${BUILT}" >> "$GITHUB_OUTPUT"
+          MAJOR="$(echo "$NEXT" | cut -d. -f1)"
+          MINOR="$(echo "$NEXT" | cut -d. -f2)"
+          PATCH="$(echo "$NEXT" | cut -d. -f3)"
+          BUILT="${MAJOR}.${MINOR}.$((PATCH-1))"
+          echo "v=${BUILT}" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.built.outputs.version }}
-          name: v${{ steps.built.outputs.version }}
+          tag_name: v${{ steps.ver.outputs.v }}
+          name: v${{ steps.ver.outputs.v }}
           files: |
-            cockpit-cronplus/cronplus_${{ steps.built.outputs.version }}_all.deb
-            cockpit-cronplus/cockpit-cronplus_${{ steps.built.outputs.version }}_all.deb
+            cockpit-cronplus/cronplus_${{ steps.ver.outputs.v }}_all.deb
+            cockpit-cronplus/cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
           body: |
-            ## cockpit-cronplus v${{ steps.built.outputs.version }}
+            ## cockpit-cronplus v${{ steps.ver.outputs.v }}
 
             ```bash
-            sudo dpkg -i cronplus_${{ steps.built.outputs.version }}_all.deb
-            sudo dpkg -i cockpit-cronplus_${{ steps.built.outputs.version }}_all.deb
+            sudo dpkg -i cronplus_${{ steps.ver.outputs.v }}_all.deb
+            sudo dpkg -i cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
             ```
-          draft: false
-          prerelease: false
 
-      - name: Commit version bump
-        if: github.event.inputs.bump != 'none'
+      - name: Commit version
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add VERSION
-          git commit -m "chore: bump version to v$(cat VERSION | tr -d '[:space:]')"
+          git commit -m "chore: v$(cat VERSION | tr -d '[:space:]')"
           git push
