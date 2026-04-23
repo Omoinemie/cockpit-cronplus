@@ -15,20 +15,17 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cockpit-cronplus
-
     steps:
       - name: Confirm
-        # 注意：boolean 类型在判断时需要使用 true/false（不带引号）
-        if: github.event.inputs.confirm != 'true'
+        if: ${{ !inputs.confirm }}
         run: |
-          echo "ERROR: You must check the confirm box to proceed"
+          echo "ERROR: You must confirm the build"
           exit 1
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
 
       - name: Install dpkg-deb
         run: sudo apt-get update && sudo apt-get install -y dpkg-deb
@@ -52,8 +49,8 @@ jobs:
           tag_name: v${{ steps.ver.outputs.v }}
           name: v${{ steps.ver.outputs.v }}
           files: |
-            cockpit-cronplus/cronplus_${{ steps.ver.outputs.v }}_all.deb
-            cockpit-cronplus/cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
+            cronplus_${{ steps.ver.outputs.v }}_all.deb
+            cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
           body: |
             ## cockpit-cronplus v${{ steps.ver.outputs.v }}
 
