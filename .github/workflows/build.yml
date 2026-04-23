@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type YES to confirm build'
+        description: 'Confirm build?'
         required: true
-        type: string
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -20,9 +21,10 @@ jobs:
 
     steps:
       - name: Confirm
-        if: github.event.inputs.confirm != 'YES'
+        # 注意：boolean 类型在判断时需要使用 true/false（不带引号）
+        if: github.event.inputs.confirm != 'true'
         run: |
-          echo "ERROR: You must type YES to confirm"
+          echo "ERROR: You must check the confirm box to proceed"
           exit 1
 
       - name: Checkout
