@@ -73,9 +73,12 @@ def main():
         sys.exit(0)
 
     def on_sighup(signum, frame):
-        logger.info("SIGHUP received, reloading config + cleanup")
+        logger.info("SIGHUP received — full reset: killing stuck processes, clearing caches")
+        # 先杀掉所有卡住的进程
+        executor.kill_all_running()
         executor.cleanup_stale()
         executor.cleanup_zombies()
+        # 清除调度器缓存并重新读取配置
         scheduler.wakeup()
 
     def on_sigchld(signum, frame):

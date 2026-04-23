@@ -48,9 +48,16 @@ class Scheduler:
         logger.info("Scheduler stopped")
 
     def wakeup(self):
-        """Force re-read of config and reschedule."""
+        """Force re-read of config and reschedule.
+
+        Clears all cached state so that config changes are treated
+        as a fresh initialisation — tasks can re-fire according to
+        their new schedules without being held back by old run records.
+        """
         self._last_conf_mtime = 0
         self._cached_tasks = None
+        self._task_last_run.clear()          # ← 清除上次运行记录
+        logger.info("Scheduler: cache cleared, will re-read config and reschedule")
         with self._cond:
             self._cond.notify_all()
 
@@ -196,8 +203,12 @@ class Scheduler:
                         self._task_last_run[task_id] = run_time
 
                         if self.executor.is_running(task_id):
-                            logger.debug(f"Task [{task_id}] already running, skipping this window")
-                            continue
+                            if task.get('kill_previous'):
+                                logger.info(f"Task [{task_id}] already running (exec window), kill_previous → killing")
+                                self.executor.kill_task(task_id)
+                            else:
+                                logger.debug(f"Task [{task_id}] already running, skipping this window")
+                                continue
 
                         self._execute_task(task)
                     else:

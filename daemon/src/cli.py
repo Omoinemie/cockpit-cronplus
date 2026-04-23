@@ -46,23 +46,28 @@ def cmd_reload(args):
 
 
 def cmd_run(args):
-    """Run a single task by id."""
+    """Run a single task by id with real-time streaming output."""
     task = get_task(args.task_id)
     if not task:
         print(f"Error: task {args.task_id} not found", file=sys.stderr)
         return 1
     cmd_display = decode_command(task.get('command', ''))
-    print(f"Running: {task.get('title') or cmd_display} ...")
+    print(f"Running: {task.get('title') or cmd_display[:60]} ...")
+    sys.stdout.flush()
+
     ex = Executor()
-    result = ex.execute(task, trigger='manual')
-    if result is None:
-        print("Skipped: concurrency limit reached")
-        return 1
-    status, output, duration_ms, exit_code = result
-    if output:
-        print(output)
-    print(f"\n{'✓' if status == 'success' else '✗'} {status} ({duration_ms}ms, exit={exit_code})")
-    return 0 if status == 'success' else 1
+    last_exit = 1
+    for line in ex.execute_stream(task, trigger='manual'):
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        # 尝试从最终状态行提取 exit code
+        if 'exit=' in line:
+            import re as _re
+            m = _re.search(r'exit=(-?\d+)', line)
+            if m:
+                last_exit = int(m.group(1))
+
+    return 0 if last_exit == 0 else 1
 
 
 def cmd_list(args):

@@ -141,6 +141,8 @@ case "\$1" in
 }
 SETTINGS
         fi
+        # 占位文件：让 /opt 目录在 purge 时不会因为空被 dpkg 自动删除
+        touch /opt/.cronplus-keep
         systemctl daemon-reload 2>/dev/null || true
         if systemctl is-enabled cronplus.service >/dev/null 2>&1; then
             systemctl restart cronplus.service 2>/dev/null || true
@@ -179,9 +181,14 @@ chmod 755 "${PKGDIR}/DEBIAN/prerm"
 cat > "${PKGDIR}/DEBIAN/postrm" << 'EOF'
 #!/bin/bash
 case "$1" in
-    purge) rm -rf /opt/cronplus /run/cronplus ;;
-    remove) systemctl daemon-reload 2>/dev/null || true ;;
+    purge)
+        rm -rf /opt/cronplus /run/cronplus
+        ;;
+    remove)
+        systemctl daemon-reload 2>/dev/null || true
+        ;;
 esac
+exit 0
 EOF
 chmod 755 "${PKGDIR}/DEBIAN/postrm"
 

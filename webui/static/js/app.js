@@ -500,15 +500,19 @@
         } catch (e) { logs = []; }
     }
 
-    // ===== Last Run Time =====
-    function getLastRunTime(taskId) {
+    // ===== Last Run Info (time + status) =====
+    function getLastRunInfo(taskId) {
         var last = null;
+        var lastStatus = null;
         logs.forEach(function (l) {
-            if (l.task_id === taskId && l.status === 'success') {
-                if (!last || l.created_at > last) last = l.created_at;
+            if (l.task_id === taskId) {
+                if (!last || l.created_at > last) {
+                    last = l.created_at;
+                    lastStatus = l.status;
+                }
             }
         });
-        return last;
+        return { time: last, status: lastStatus };
     }
 
     // ===== Render Tasks =====
@@ -546,8 +550,18 @@
             var hasMultipleLines = cmdDisplay.indexOf('\n') >= 0;
             if (firstLine.length > 70) firstLine = firstLine.slice(0, 67) + '...';
             if (hasMultipleLines) firstLine += ' ' + I18n.t('task.multiLine');
-            var lastRun = getLastRunTime(task.id);
-            var lastRunShort = lastRun ? TimeUtil.short(lastRun) : null;
+            var lastRunInfo = getLastRunInfo(task.id);
+            var lastRunShort = lastRunInfo.time ? TimeUtil.short(lastRunInfo.time) : null;
+            var lastRunIcon = '';
+            if (lastRunInfo.status === 'success') {
+                lastRunIcon = '<span class="last-run-icon success" title="' + I18n.t('log.filter.success') + '">' +
+                    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14">' +
+                    '<polyline points="20 6 9 17 4 12"/></svg></span>';
+            } else if (lastRunInfo.status === 'error') {
+                lastRunIcon = '<span class="last-run-icon error" title="' + I18n.t('log.filter.error') + '">' +
+                    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14">' +
+                    '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>';
+            }
 
             var nextRunStr = '';
             if (task.enabled !== false && task.schedule && !task.schedule.startsWith('@')) {
@@ -579,7 +593,7 @@
                 (badges ? '<div class="task-badges">' + badges + '</div>' : '') +
                 '<div class="task-time-info">' +
                 '<span class="time-item"><span class="time-label" data-i18n="task.lastRun">' + I18n.t('task.lastRun') + '</span> ' +
-                (lastRunShort ? '<span class="time-last">' + Utils.escHtml(lastRunShort) + '</span>' : '<span class="time-na" data-i18n="task.noRecord">' + I18n.t('task.noRecord') + '</span>') +
+                (lastRunShort ? lastRunIcon + '<span class="time-last">' + Utils.escHtml(lastRunShort) + '</span>' : '<span class="time-na" data-i18n="task.noRecord">' + I18n.t('task.noRecord') + '</span>') +
                 '</span>' +
                 '<span class="time-item"><span class="time-label" data-i18n="task.nextRun">' + I18n.t('task.nextRun') + '</span> ' +
                 (nextRunStr ? '<span class="time-next">' + Utils.escHtml(nextRunStr) + '</span>' : '<span class="time-na">-</span>') +

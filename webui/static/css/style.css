@@ -291,6 +291,14 @@ body {
 .task-time-info .time-next { color: var(--warning); }
 .task-time-info .time-na { color: var(--text-muted); font-style: italic; }
 
+/* Last run status icon */
+.last-run-icon {
+    display: inline-flex; align-items: center; vertical-align: middle; margin-right: 2px;
+}
+.last-run-icon svg { width: 14px; height: 14px; }
+.last-run-icon.success { color: var(--success); }
+.last-run-icon.error { color: var(--error); }
+
 .task-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* ===== Log List ===== */
