@@ -23,6 +23,9 @@ echo "Syncing version ${VERSION} to source files..."
 [ -f "${DIR}/daemon/src/version.py" ] && sed -i "s/^VERSION = .*/VERSION = '${VERSION}'/" "${DIR}/daemon/src/version.py"
 [ -f "${DIR}/webui/manifest.json" ] && sed -i "s/\"plugin_version\":\s*\"[^\"]*\"/\"plugin_version\": \"${VERSION}\"/" "${DIR}/webui/manifest.json"
 
+RELEASE_DIR="${DIR}/release"
+mkdir -p "${RELEASE_DIR}"
+
 echo "========================================"
 echo "  Building cockpit-cronplus ${VERSION}"
 echo "========================================"
@@ -39,7 +42,7 @@ SRC="${DIR}/daemon"
 echo ""
 echo "=== [1/2] Building ${PKGNAME}_${VERSION}_${ARCH}.deb ==="
 
-rm -rf "${DIR:?}/${PKGDIR}" "${DIR}/${PKGNAME}_"*.deb
+rm -rf "${DIR:?}/${PKGDIR}" "${RELEASE_DIR}/${PKGNAME}_"*.deb
 
 # 构造目录结构
 mkdir -p "${PKGDIR}/DEBIAN"
@@ -153,7 +156,8 @@ chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN
 chmod 755 "${PKGDIR}/usr/bin/cronplus"
 
 dpkg-deb --build --root-owner-group "${PKGDIR}"
-echo "Built: ${DIR}/${PKGDIR}.deb ($(du -h "${DIR}/${PKGDIR}.deb" | cut -f1))"
+mv "${PKGDIR}.deb" "${RELEASE_DIR}/"
+echo "Built: ${RELEASE_DIR}/${PKGDIR}.deb ($(du -h "${RELEASE_DIR}/${PKGDIR}.deb" | cut -f1))"
 rm -rf "${PKGDIR}"
 
 # ──────────────────────────────────────────
@@ -167,7 +171,7 @@ SRC="${DIR}/webui"
 echo ""
 echo "=== [2/2] Building ${PKGNAME}_${VERSION}_${ARCH}.deb ==="
 
-rm -rf "${DIR:?}/${PKGDIR}" "${DIR}/${PKGNAME}_"*.deb
+rm -rf "${DIR:?}/${PKGDIR}" "${RELEASE_DIR}/${PKGNAME}_"*.deb
 
 mkdir -p "${PKGDIR}/DEBIAN"
 mkdir -p "${PKGDIR}/usr/share/cockpit/cronplus"
@@ -214,8 +218,9 @@ find "${PKGDIR}" -type f -exec chmod 644 {} \;
 chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN/postrm"
 
 dpkg-deb --build --root-owner-group "${PKGDIR}"
-echo "Built: ${DIR}/${PKGDIR}.deb ($(du -h "${DIR}/${PKGDIR}.deb" | cut -f1))"
+mv "${PKGDIR}.deb" "${RELEASE_DIR}/"
+echo "Built: ${RELEASE_DIR}/${PKGDIR}.deb ($(du -h "${RELEASE_DIR}/${PKGDIR}.deb" | cut -f1))"
 rm -rf "${PKGDIR}"
 
 echo ""
-echo "Done! All packages are in ${DIR}"
+echo "Done! All packages are in ${RELEASE_DIR}"
