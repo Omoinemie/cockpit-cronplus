@@ -1,6 +1,6 @@
 name: Build & Release
 
-于:
+on:
   workflow_dispatch:
     inputs:
       version:
