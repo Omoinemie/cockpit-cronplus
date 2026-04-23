@@ -153,7 +153,9 @@ chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN
 chmod 755 "${PKGDIR}/usr/bin/cronplus"
 
 dpkg-deb --build --root-owner-group "${PKGDIR}"
-mv "${PKGDIR}.deb" "${DIR}/"
+if [ ! -f "${DIR}/${PKGDIR}.deb" ]; then
+    mv "${PKGDIR}.deb" "${DIR}/"
+fi
 rm -rf "${PKGDIR}"
 
 # ──────────────────────────────────────────
