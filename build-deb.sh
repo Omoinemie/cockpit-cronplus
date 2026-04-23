@@ -100,6 +100,19 @@ cat > "${PKGDIR}/DEBIAN/conffiles" << 'CONFFILES'
 /opt/cronplus/settings.json
 CONFFILES
 
+# DEBIAN/preinst — ensure /opt exists so dpkg won't create (and later purge) it
+cat > "${PKGDIR}/DEBIAN/preinst" << 'EOF'
+#!/bin/bash
+set -e
+case "$1" in
+    install|upgrade)
+        # Prevent dpkg from claiming ownership of /opt
+        [ -d /opt ] || mkdir -p /opt
+        ;;
+esac
+exit 0
+EOF
+
 # DEBIAN/postinst
 cat > "${PKGDIR}/DEBIAN/postinst" << POSTINST
 #!/bin/bash
@@ -154,7 +167,7 @@ find "${PKGDIR}/opt/cronplus" -type d -exec chmod 755 {} \;
 find "${PKGDIR}/usr" -type d -exec chmod 755 {} \;
 find "${PKGDIR}/opt/cronplus" -type f -exec chmod 644 {} \;
 find "${PKGDIR}/usr" -type f -exec chmod 644 {} \;
-chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN/postrm"
+chmod 755 "${PKGDIR}/DEBIAN/preinst" "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN/postrm"
 chmod 755 "${PKGDIR}/usr/bin/cronplus"
 
 dpkg-deb --build --root-owner-group "${PKGDIR}"
