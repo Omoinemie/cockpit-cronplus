@@ -3,10 +3,6 @@ name: Build & Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: '版本号 (留空则读取 VERSION 文件)'
-        required: false
-        default: ''
       create_release:
         description: '是否发布到 Release (Yes/No)'
         type: boolean
@@ -15,9 +11,14 @@ on:
 
 jobs:
   build:
+    name: Build for ${{ matrix.arch }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,26 +30,22 @@ jobs:
 
       - name: Determine version
         id: version
+        # 仅从文件读取版本
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            # 即使这里写了文件，build-deb.sh 也会通过参数再次确认同步
-            echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            VER=$(cat VERSION | tr -d '[:space:]')
-            echo "ver=${VER}" >> "$GITHUB_OUTPUT"
-          fi
+          VER=$(cat VERSION | tr -d '[:space:]')
+          echo "ver=${VER}" >> "$GITHUB_OUTPUT"
 
       - name: Build & Package
         run: |
           chmod +x build-deb.sh
-          # 将确定的版本号作为第一个参数传递给脚本
-          bash build-deb.sh ${{ steps.version.outputs.ver }}
+          # 第一个参数直接传架构，版本号由脚本内部读取
+          bash build-deb.sh ${{ matrix.arch }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cronplus-${{ steps.version.outputs.ver }}
-          path: dist/
+          name: cronplus-${{ steps.version.outputs.ver }}-${{ matrix.arch }}
+          path: dist/${{ matrix.arch }}/
           retention-days: 30
 
       - name: Create Release
@@ -58,9 +55,9 @@ jobs:
           tag_name: v${{ steps.version.outputs.ver }}
           name: v${{ steps.version.outputs.ver }}
           files: |
-            dist/cronplus_*.deb
-            dist/cockpit-cronplus_*.deb
-            dist/SHA256SUMS
+            dist/${{ matrix.arch }}/cronplus_*.deb
+            dist/${{ matrix.arch }}/cockpit-cronplus_*.deb
+            dist/${{ matrix.arch }}/SHA256SUMS
           generate_release_notes: true
           make_latest: true
         env:
