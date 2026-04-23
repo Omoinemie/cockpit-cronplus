@@ -136,22 +136,24 @@ cat > "${PKGDIR}/DEBIAN/postrm" << 'EOF'
 set -e
 case "$1" in
     purge)
-        # 显式删除应用目录，而不依赖 dpkg 的递归删除
-        if [ -d /opt/cronplus ]; then
-            rm -rf /opt/cronplus
+        # 绝对路径硬编码，防止变量失效
+        if [ -d "/opt/cronplus" ]; then
+            rm -rf "/opt/cronplus"
         fi
-        rm -rf /run/cronplus
+        rm -rf "/run/cronplus"
         ;;
-    remove)
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
         systemctl daemon-reload 2>/dev/null || true
         ;;
 esac
 exit 0
 EOF
 
-# 设置权限并打包
-find "${PKGDIR}" -type d -exec chmod 755 {} \;
-find "${PKGDIR}" -type f -exec chmod 644 {} \;
+# 设置权限并打包（只对应用子目录设置，不触碰 /opt 等父目录）
+find "${PKGDIR}/opt/cronplus" -type d -exec chmod 755 {} \;
+find "${PKGDIR}/usr" -type d -exec chmod 755 {} \;
+find "${PKGDIR}/opt/cronplus" -type f -exec chmod 644 {} \;
+find "${PKGDIR}/usr" -type f -exec chmod 644 {} \;
 chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN/postrm"
 chmod 755 "${PKGDIR}/usr/bin/cronplus"
 
@@ -213,8 +215,8 @@ cat > "${PKGDIR}/DEBIAN/postrm" << 'EOF'
 exit 0
 EOF
 
-find "${PKGDIR}" -type d -exec chmod 755 {} \;
-find "${PKGDIR}" -type f -exec chmod 644 {} \;
+find "${PKGDIR}/usr" -type d -exec chmod 755 {} \;
+find "${PKGDIR}/usr" -type f -exec chmod 644 {} \;
 chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN/postrm"
 
 dpkg-deb --build --root-owner-group "${PKGDIR}"
