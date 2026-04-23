@@ -21,6 +21,19 @@ if [ -z "${VERSION}" ]; then
     exit 1
 fi
 
+# ── Sync version to all source files ──
+echo "Syncing version ${VERSION} to source files..."
+
+# daemon/src/version.py
+sed -i "s/^VERSION = .*/VERSION = '${VERSION}'/" "${DIR}/daemon/src/version.py"
+
+# webui/manifest.json
+sed -i "s/\"plugin_version\":\s*\"[^\"]*\"/\"plugin_version\": \"${VERSION}\"/" "${DIR}/webui/manifest.json"
+
+echo "  ✓ daemon/src/version.py  → ${VERSION}"
+echo "  ✓ webui/manifest.json    → ${VERSION}"
+echo ""
+
 echo "========================================"
 echo "  Building cockpit-cronplus ${VERSION}"
 echo "========================================"
@@ -275,10 +288,14 @@ NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
 
 echo "${NEW_VERSION}" > "${VERSION_FILE}"
 
+# Sync incremented version back to source files
+sed -i "s/^VERSION = .*/VERSION = '${NEW_VERSION}'/" "${DIR}/daemon/src/version.py"
+sed -i "s/\"plugin_version\":\s*\"[^\"]*\"/\"plugin_version\": \"${NEW_VERSION}\"/" "${DIR}/webui/manifest.json"
+
 echo ""
 echo "========================================"
 echo "  Build complete! v${VERSION}"
-echo "  Next version: v${NEW_VERSION}"
+echo "  Next version: v${NEW_VERSION} (synced to VERSION, version.py, manifest.json)"
 echo "========================================"
 echo ""
 ls -lh "${DIR}/cronplus_${VERSION}_all.deb" "${DIR}/cockpit-cronplus_${VERSION}_all.deb"
