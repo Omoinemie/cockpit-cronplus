@@ -1,0 +1,22 @@
+[Unit]
+Description=cronplus - Advanced Cron Task Manager
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cronplusd --conf /opt/cronplus/tasks.conf --logs /opt/cronplus/logs
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+User=root
+
+NoNewPrivileges=no
+ProtectSystem=strict
+ReadWritePaths=/opt/cronplus /run
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target
