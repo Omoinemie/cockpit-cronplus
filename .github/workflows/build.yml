@@ -1,6 +1,6 @@
 name: Build & Release
 
-on:
+于:
   workflow_dispatch:
     inputs:
       version:
@@ -31,7 +31,7 @@ jobs:
         id: version
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "${{ github.event.inputs.version }}" > VERSION
+            # 即使这里写了文件，build-deb.sh 也会通过参数再次确认同步
             echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           else
             VER=$(cat VERSION | tr -d '[:space:]')
@@ -41,7 +41,8 @@ jobs:
       - name: Build & Package
         run: |
           chmod +x build-deb.sh
-          bash build-deb.sh
+          # 将确定的版本号作为第一个参数传递给脚本
+          bash build-deb.sh ${{ steps.version.outputs.ver }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -51,7 +52,6 @@ jobs:
           retention-days: 30
 
       - name: Create Release
-        # 关键点：使用 if 判断 inputs 中的布尔值
         if: ${{ github.event.inputs.create_release == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
