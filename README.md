@@ -15,8 +15,8 @@ cronplus (CLI)            命令行管理工具（实时流式输出，信号转
 ## 安装
 
 ```bash
-dpkg -i cronplus_2.0.7_amd64.deb           # 后端，安装后自动启动
-dpkg -i cockpit-cronplus_2.0.7_amd64.deb   # Cockpit 前端插件
+dpkg -i cronplus_*.deb           # 后端，安装后自动启动
+dpkg -i cockpit-cronplus_*.deb   # Cockpit 前端插件
 ```
 
 ## CLI 使用
