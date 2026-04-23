@@ -560,7 +560,8 @@
                 ['cronplus', 'logs', '--all', '--json', '-n', '1000'],
                 { err: 'message', environ: ['LC_ALL=C'] }
             );
-            logs = JSON.parse(raw || '[]');
+            logs = JSON.parse(raw || '[]') || [];
+            if (!Array.isArray(logs)) logs = [];
         } catch (e) { logs = []; }
     }
 
