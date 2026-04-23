@@ -68,6 +68,7 @@
         renderTasks();
         renderLogs();
         startAutoRefresh();
+        initFooter();
     }
 
     // ===== Settings =====
@@ -389,6 +390,51 @@
     // ===== Language Switcher (now only in settings modal) =====
     function initLangSwitcher() {
         // Language is managed via settings modal only
+    }
+
+    // ===== Footer =====
+    var footerStatusTimer = null;
+
+    function initFooter() {
+        // Load version from manifest.json
+        Utils.shellReadJson('/usr/share/cockpit/cronplus/manifest.json').then(function (m) {
+            var ver = m && m.plugin_version ? m.plugin_version : '?';
+            $('#footerVersion').textContent = 'v' + ver;
+        }).catch(function () {
+            // Fallback: try relative path
+            cockpit.file('manifest.json').read().then(function (content) {
+                try {
+                    var m = JSON.parse(content);
+                    $('#footerVersion').textContent = 'v' + (m.plugin_version || '?');
+                } catch (e) { $('#footerVersion').textContent = 'v?'; }
+            }).catch(function () { $('#footerVersion').textContent = 'v?'; }
+            );
+        });
+
+        // Initial status check + periodic poll
+        updateFooterStatus();
+        footerStatusTimer = setInterval(updateFooterStatus, 10000);
+    }
+
+    function updateFooterStatus() {
+        var el = $('#footerStatus');
+        if (!el) return;
+        cockpit.spawn(
+            ['systemctl', 'is-active', 'cronplus.service'],
+            { err: 'message', environ: ['LC_ALL=C'] }
+        ).then(function (out) {
+            var state = (out || '').trim();
+            if (state === 'active') {
+                el.className = 'footer-status running';
+                el.querySelector('.status-text').textContent = 'running';
+            } else {
+                el.className = 'footer-status stopped';
+                el.querySelector('.status-text').textContent = state || 'stopped';
+            }
+        }).catch(function () {
+            el.className = 'footer-status stopped';
+            el.querySelector('.status-text').textContent = 'stopped';
+        });
     }
 
     // ===== Auto Refresh =====
