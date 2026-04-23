@@ -46,8 +46,8 @@ jobs:
           tag_name: v${{ steps.ver.outputs.v }}
           name: v${{ steps.ver.outputs.v }}
           files: |
-            cronplus_${{ steps.ver.outputs.v }}_all.deb
-            cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
+            release/cronplus_${{ steps.ver.outputs.v }}_all.deb
+            release/cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
           body: |
             ## cockpit-cronplus v${{ steps.ver.outputs.v }}
 
@@ -60,6 +60,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add *.deb VERSION daemon/src/version.py webui/manifest.json
+          git add VERSION daemon/src/version.py webui/manifest.json
           git diff --quiet && git diff --staged --quiet || git commit -m "Build version $(cat VERSION)"
           git push
