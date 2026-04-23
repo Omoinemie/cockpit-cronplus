@@ -27,18 +27,14 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      - name: Build
-        run: bash build-deb.sh
-
       - name: Get version
         id: ver
         run: |
-          NEXT="$(cat VERSION | tr -d '[:space:]')"
-          MAJOR="$(echo "$NEXT" | cut -d. -f1)"
-          MINOR="$(echo "$NEXT" | cut -d. -f2)"
-          PATCH="$(echo "$NEXT" | cut -d. -f3)"
-          BUILT="${MAJOR}.${MINOR}.$((PATCH-1))"
-          echo "v=${BUILT}" >> "$GITHUB_OUTPUT"
+          VER="$(cat VERSION | tr -d '[:space:]')"
+          echo "v=${VER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: bash build-deb.sh
 
       - name: Create release
         uses: softprops/action-gh-release@v2
