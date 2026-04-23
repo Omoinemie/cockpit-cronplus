@@ -4,42 +4,40 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC="$DIR/cronplus"
 
-# ── 处理版本输入与同步 ──
-# 如果脚本执行时带了参数 (例如: ./build-deb.sh 1.0.1)
-if [ -n "$1" ]; then
-    echo "$1" > "$DIR/VERSION"
-    echo "==> Version file updated to: $1"
-fi
-
-# 读取最终确定的版本号
+# ── 1. 严格从文件读取版本 ──
 VERSION=$(cat "$DIR/VERSION" 2>/dev/null | tr -d '[:space:]')
 if [ -z "$VERSION" ]; then
-    echo "ERROR: VERSION file not found or empty"
+    echo "ERROR: VERSION file not found or empty. Please create a VERSION file."
     exit 1
 fi
 
-# 同步更新源码中的 manifest.json (确保源码版本与构建版本一致)
+# ── 2. 处理架构输入 (现在的第1个参数) ──
+ARCH=${1:-"amd64"}
+echo "==> Target Architecture: ${ARCH}"
+
+# 同步更新源码中的 manifest.json，保持构建一致性
 MANIFEST_PATH="$DIR/cockpit-cronplus/manifest.json"
 if [ -f "$MANIFEST_PATH" ]; then
     sed -i "s/\"plugin_version\": \"[^\"]*\"/\"plugin_version\": \"${VERSION}\"/" "$MANIFEST_PATH"
-    echo "==> Source manifest.json updated to: ${VERSION}"
 fi
 
-echo "==> Building cronplus v${VERSION}"
+echo "==> Building cronplus v${VERSION} for ${ARCH}"
 
-# ── 编译 Go 二进制文件 ──
-echo "[0/4] Compiling Go binaries..."
+# ── 3. 交叉编译 Go 二进制文件 ──
+echo "[0/4] Compiling Go binaries for ${ARCH}..."
 cd "$SRC"
-CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o bin/cronplusd ./cmd/cronplusd
-CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o bin/cronplus ./cmd/cronplus
+CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -ldflags "-s -w -X main.version=${VERSION}" -o bin/cronplusd ./cmd/cronplusd
+CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -ldflags "-s -w -X main.version=${VERSION}" -o bin/cronplus ./cmd/cronplus
 cd "$DIR"
 
-rm -rf "$DIR/dist"
-mkdir -p "$DIR/dist"
+DIST_DIR="$DIR/dist/${ARCH}"
+rm -rf "$DIST_DIR"
+mkdir -p "$DIST_DIR"
 
-# ── 后端 deb 打包 ──
-echo "[1/4] Packaging cronplus backend..."
-PKG="$DIR/dist/cronplus_${VERSION}_amd64"
+# ── 4. 后端 deb 打包 ──
+echo "[1/4] Packaging cronplus backend (${ARCH})..."
+PKG="$DIR/dist/cronplus_${VERSION}_${ARCH}"
+rm -rf "$PKG"
 mkdir -p "$PKG"/{DEBIAN,usr/bin,opt/cronplus/logs,lib/systemd/system}
 
 cp "$SRC/bin/cronplusd" "$PKG/usr/bin/"
@@ -85,40 +83,38 @@ chmod 755 "$PKG/DEBIAN"/{postinst,prerm,postrm}
 cat > "$PKG/DEBIAN/control" <<EOF
 Package: cronplus
 Version: ${VERSION}
-Architecture: amd64
+Architecture: ${ARCH}
 Maintainer: cronplus <cronplus@localhost>
 Description: Advanced Cron Task Manager
 Depends: systemd
 EOF
 
-dpkg-deb --build "$PKG" "$DIR/dist/cronplus_${VERSION}_amd64.deb"
+dpkg-deb --build "$PKG" "$DIST_DIR/cronplus_${VERSION}_${ARCH}.deb"
 
-# ── Cockpit WebUI deb 打包 ──
-echo "[2/4] Packaging cockpit-cronplus WebUI..."
-WPKG="$DIR/dist/cockpit-cronplus_${VERSION}_amd64"
+# ── 5. Cockpit WebUI deb 打包 ──
+echo "[2/4] Packaging cockpit-cronplus WebUI (${ARCH})..."
+WPKG="$DIR/dist/cockpit-cronplus_${VERSION}_${ARCH}"
+rm -rf "$WPKG"
 mkdir -p "$WPKG"/{DEBIAN,usr/share/cockpit/cronplus}
 
-# 复制已同步过版本号的源码
 cp -r "$DIR/cockpit-cronplus/"* "$WPKG/usr/share/cockpit/cronplus/"
 
 cat > "$WPKG/DEBIAN/control" <<EOF
 Package: cockpit-cronplus
 Version: ${VERSION}
-Architecture: amd64
+Architecture: ${ARCH}
 Maintainer: cronplus <cronplus@localhost>
 Description: Advanced Cron Task Manager - Cockpit UI
 Depends: cronplus (= ${VERSION}), cockpit
 EOF
 
-dpkg-deb --build "$WPKG" "$DIR/dist/cockpit-cronplus_${VERSION}_amd64.deb"
+dpkg-deb --build "$WPKG" "$DIST_DIR/cockpit-cronplus_${VERSION}_${ARCH}.deb"
 
-# ── 生成校验和 ──
+# ── 6. 生成校验和 ──
 echo "[3/4] Generating checksums..."
-cd "$DIR/dist"
+cd "$DIST_DIR"
 sha256sum *.deb > SHA256SUMS
 
-# ── 清理 ──
-echo "[4/4] Cleaning up..."
-rm -rf "$SRC/bin"
-
-echo "Done. Output in $DIR/dist/"
+# ── 7. 清理 ──
+rm -rf "$SRC/bin" "$PKG" "$WPKG"
+echo "Done. Output: $DIST_DIR"
