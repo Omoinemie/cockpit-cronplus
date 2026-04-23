@@ -3,6 +3,10 @@ name: Build & Release
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: '版本号 (留空则读取 VERSION 文件)'
+        required: false
+        default: ''
       create_release:
         description: '是否发布到 Release (Yes/No)'
         type: boolean
@@ -10,54 +14,111 @@ on:
         default: true
 
 jobs:
+  # ── 阶段 1: 确定版本号 ──
+  prepare:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      ver: ${{ steps.resolve.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: resolve
+        run: |
+          INPUT_VER="${{ github.event.inputs.version }}"
+          FILE_VER=$(cat VERSION | tr -d '[:space:]')
+
+          if [ -n "$INPUT_VER" ]; then
+            # 手动输入优先，校验格式
+            VER="$INPUT_VER"
+            if ! echo "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::版本号格式无效: $VER (需要 x.y.z)"
+              exit 1
+            fi
+            echo "$VER" > VERSION
+            echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+            echo "📌 使用手动版本: $VER (VERSION 文件已更新)"
+          else
+            VER="$FILE_VER"
+            echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+            echo "📌 使用 VERSION 文件版本: $VER"
+          fi
+
+      - name: Commit version bump
+        if: ${{ github.event.inputs.version != '' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git diff --staged --quiet && exit 0
+          git commit -m "chore: bump version to ${{ steps.resolve.outputs.ver }}"
+          git push
+
+  # ── 阶段 2: 构建 & 打包 ──
   build:
     name: Build for ${{ matrix.arch }}
+    needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: write
     strategy:
       matrix:
         arch: [amd64, arm64]
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    env:
+      VERSION: ${{ needs.prepare.outputs.ver }}
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-
-      - name: Determine version
-        id: version
-        # 仅从文件读取版本
-        run: |
-          VER=$(cat VERSION | tr -d '[:space:]')
-          echo "ver=${VER}" >> "$GITHUB_OUTPUT"
 
       - name: Build & Package
         run: |
           chmod +x build-deb.sh
-          # 第一个参数直接传架构，版本号由脚本内部读取
           bash build-deb.sh ${{ matrix.arch }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cronplus-${{ steps.version.outputs.ver }}-${{ matrix.arch }}
+          name: cronplus-${{ env.VERSION }}-${{ matrix.arch }}
           path: dist/${{ matrix.arch }}/
           retention-days: 30
 
+  # ── 阶段 3: 发布 Release ──
+  release:
+    name: Release
+    needs: [prepare, build]
+    if: ${{ github.event.inputs.create_release == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.ver }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          pattern: cronplus-${{ env.VERSION }}-*
+          merge-multiple: true
+
       - name: Create Release
-        if: ${{ github.event.inputs.create_release == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.ver }}
-          name: v${{ steps.version.outputs.ver }}
+          tag_name: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
           files: |
-            dist/${{ matrix.arch }}/cronplus_*.deb
-            dist/${{ matrix.arch }}/cockpit-cronplus_*.deb
-            dist/${{ matrix.arch }}/SHA256SUMS
+            dist/**/cronplus_*.deb
+            dist/**/cockpit-cronplus_*.deb
+            dist/**/SHA256SUMS
           generate_release_notes: true
           make_latest: true
         env:
