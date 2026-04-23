@@ -3,59 +3,65 @@ name: Build & Release
 on:
   workflow_dispatch:
     inputs:
-      confirm:
-        description: 'Confirm build?'
-        required: true
+      version:
+        description: '版本号 (留空则读取 VERSION 文件)'
+        required: false
+        default: ''
+      create_release:
+        description: '是否发布到 Release (Yes/No)'
         type: boolean
-        default: false
-
-permissions:
-  contents: write
+        required: true
+        default: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Confirm
-        if: ${{ !inputs.confirm }}
-        run: |
-          echo "ERROR: You must confirm the build"
-          exit 1
-
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          ref: ${{ github.ref }}
+          go-version: '1.23'
 
-      - name: Get version
-        id: ver
+      - name: Determine version
+        id: version
         run: |
-          VER="$(cat VERSION | tr -d '[:space:]')"
-          echo "v=${VER}" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "${{ github.event.inputs.version }}" > VERSION
+            echo "ver=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            VER=$(cat VERSION | tr -d '[:space:]')
+            echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Build
-        run: bash build-deb.sh
+      - name: Build & Package
+        run: |
+          chmod +x build-deb.sh
+          bash build-deb.sh
 
-      - name: Create release
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cronplus-${{ steps.version.outputs.ver }}
+          path: dist/
+          retention-days: 30
+
+      - name: Create Release
+        # 关键点：使用 if 判断 inputs 中的布尔值
+        if: ${{ github.event.inputs.create_release == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.ver.outputs.v }}
-          name: v${{ steps.ver.outputs.v }}
+          tag_name: v${{ steps.version.outputs.ver }}
+          name: v${{ steps.version.outputs.ver }}
           files: |
-            release/cronplus_${{ steps.ver.outputs.v }}_all.deb
-            release/cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
-          body: |
-            ## cockpit-cronplus v${{ steps.ver.outputs.v }}
-
-            ```bash
-            sudo dpkg -i cronplus_${{ steps.ver.outputs.v }}_all.deb
-            sudo dpkg -i cockpit-cronplus_${{ steps.ver.outputs.v }}_all.deb
-            ```
-
-      - name: Commit version
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add VERSION daemon/src/version.py webui/manifest.json
-          git diff --quiet && git diff --staged --quiet || git commit -m "Build version $(cat VERSION)"
-          git push
+            dist/cronplus_*.deb
+            dist/cockpit-cronplus_*.deb
+            dist/SHA256SUMS
+          generate_release_notes: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
