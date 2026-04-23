@@ -9,13 +9,13 @@ VERSION_FILE="${DIR}/VERSION"
 
 # ── Read current version ──
 if [ ! -f "${VERSION_FILE}" ]; then
-    echo "1.0.0" > "${VERSION_FILE}"
+    echo "1.0.0" > "${VERSION_FILE}"
 fi
 VERSION="$(cat "${VERSION_FILE}" | tr -d '[:space:]')"
 
 if [ -z "${VERSION}" ]; then
-    echo "ERROR: VERSION file is empty"
-    exit 1
+    echo "ERROR: VERSION file is empty"
+    exit 1
 fi
 
 # ── Sync version to all source files ──
@@ -27,7 +27,7 @@ RELEASE_DIR="${DIR}/release"
 mkdir -p "${RELEASE_DIR}"
 
 echo "========================================"
-echo "  Building cockpit-cronplus ${VERSION}"
+echo "  Building cockpit-cronplus ${VERSION}"
 echo "========================================"
 
 # ──────────────────────────────────────────
@@ -59,20 +59,20 @@ cp "${SRC}/systemd/cronplus.service" "${PKGDIR}/etc/systemd/system/"
 echo '[]' > "${PKGDIR}/opt/cronplus/tasks.conf"
 cat > "${PKGDIR}/opt/cronplus/settings.json" << 'SETTINGS'
 {
-  "language": "zh-CN",
-  "theme": "auto",
-  "autoRefreshInterval": 15,
-  "logMaxBytes": 10485760,
-  "logBackupCount": 5,
-  "defaultRunUser": "root",
-  "defaultTimeout": 0,
-  "defaultMaxRetries": 0,
-  "defaultRetryInterval": 60,
-  "logPageSize": 20,
-  "taskPageSize": 20,
-  "daemonLogLevel": "all",
-  "daemonLogLines": 100,
-  "daemonLogInterval": 2
+  "language": "zh-CN",
+  "theme": "auto",
+  "autoRefreshInterval": 15,
+  "logMaxBytes": 10485760,
+  "logBackupCount": 5,
+  "defaultRunUser": "root",
+  "defaultTimeout": 0,
+  "defaultMaxRetries": 0,
+  "defaultRetryInterval": 60,
+  "logPageSize": 20,
+  "taskPageSize": 20,
+  "daemonLogLevel": "all",
+  "daemonLogLines": 100,
+  "daemonLogInterval": 2
 }
 SETTINGS
 
@@ -100,35 +100,22 @@ cat > "${PKGDIR}/DEBIAN/conffiles" << 'CONFFILES'
 /opt/cronplus/settings.json
 CONFFILES
 
-# DEBIAN/preinst — ensure /opt exists so dpkg won't create (and later purge) it
-cat > "${PKGDIR}/DEBIAN/preinst" << 'EOF'
-#!/bin/bash
-set -e
-case "$1" in
-    install|upgrade)
-        # Prevent dpkg from claiming ownership of /opt
-        [ -d /opt ] || mkdir -p /opt
-        ;;
-esac
-exit 0
-EOF
-
 # DEBIAN/postinst
 cat > "${PKGDIR}/DEBIAN/postinst" << POSTINST
 #!/bin/bash
 set -e
 case "\$1" in
-    configure)
-        mkdir -p /opt/cronplus/logs
-        chmod 755 /opt/cronplus /opt/cronplus/logs
-        systemctl daemon-reload 2>/dev/null || true
-        if systemctl is-enabled cronplus.service >/dev/null 2>&1; then
-            systemctl restart cronplus.service 2>/dev/null || true
-        else
-            systemctl enable cronplus.service 2>/dev/null || true
-            systemctl start cronplus.service 2>/dev/null || true
-        fi
-        ;;
+    configure)
+        mkdir -p /opt/cronplus/logs
+        chmod 755 /opt/cronplus /opt/cronplus/logs
+        systemctl daemon-reload 2>/dev/null || true
+        if systemctl is-enabled cronplus.service >/dev/null 2>&1; then
+            systemctl restart cronplus.service 2>/dev/null || true
+        else
+            systemctl enable cronplus.service 2>/dev/null || true
+            systemctl start cronplus.service 2>/dev/null || true
+        fi
+        ;;
 esac
 POSTINST
 
@@ -136,10 +123,10 @@ POSTINST
 cat > "${PKGDIR}/DEBIAN/prerm" << 'EOF'
 #!/bin/bash
 case "$1" in
-    remove|deconfigure)
-        systemctl stop cronplus.service 2>/dev/null || true
-        systemctl disable cronplus.service 2>/dev/null || true
-        ;;
+    remove|deconfigure)
+        systemctl stop cronplus.service 2>/dev/null || true
+        systemctl disable cronplus.service 2>/dev/null || true
+        ;;
 esac
 EOF
 
@@ -148,16 +135,16 @@ cat > "${PKGDIR}/DEBIAN/postrm" << 'EOF'
 #!/bin/bash
 set -e
 case "$1" in
-    purge)
-        # 绝对路径硬编码，防止变量失效
-        if [ -d "/opt/cronplus" ]; then
-            rm -rf "/opt/cronplus"
-        fi
-        rm -rf "/run/cronplus"
-        ;;
-    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
-        systemctl daemon-reload 2>/dev/null || true
-        ;;
+    purge)
+        # 绝对路径硬编码，防止变量失效
+        if [ -d "/opt/cronplus" ]; then
+            rm -rf "/opt/cronplus"
+        fi
+        rm -rf "/run/cronplus"
+        ;;
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        systemctl daemon-reload 2>/dev/null || true
+        ;;
 esac
 exit 0
 EOF
@@ -167,7 +154,7 @@ find "${PKGDIR}/opt/cronplus" -type d -exec chmod 755 {} \;
 find "${PKGDIR}/usr" -type d -exec chmod 755 {} \;
 find "${PKGDIR}/opt/cronplus" -type f -exec chmod 644 {} \;
 find "${PKGDIR}/usr" -type f -exec chmod 644 {} \;
-chmod 755 "${PKGDIR}/DEBIAN/preinst" "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN/postrm"
+chmod 755 "${PKGDIR}/DEBIAN/postinst" "${PKGDIR}/DEBIAN/prerm" "${PKGDIR}/DEBIAN/postrm"
 chmod 755 "${PKGDIR}/usr/bin/cronplus"
 
 dpkg-deb --build --root-owner-group "${PKGDIR}"
@@ -211,14 +198,14 @@ cat > "${PKGDIR}/DEBIAN/postinst" << 'POSTINST'
 #!/bin/bash
 set -e
 if [ "$1" = "configure" ]; then
-    systemctl is-active --quiet cockpit.socket && systemctl restart cockpit.socket || true
+    systemctl is-active --quiet cockpit.socket && systemctl restart cockpit.socket || true
 fi
 POSTINST
 
 cat > "${PKGDIR}/DEBIAN/prerm" << 'EOF'
 #!/bin/bash
 if [ "$1" = "remove" ]; then
-    systemctl is-active --quiet cockpit.socket && systemctl restart cockpit.socket || true
+    systemctl is-active --quiet cockpit.socket && systemctl restart cockpit.socket || true
 fi
 EOF
 
