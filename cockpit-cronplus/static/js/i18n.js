@@ -2,12 +2,12 @@
  * i18n module — loads language JSON via relative fetch
  */
 var I18n = (function () {
-    var _currentLang = 'zh-CN';
+    var _currentLang = 'en';
     var _dict = {};
     var _cache = {};
 
     /**
-     * Detect preferred language: localStorage > browser navigator > fallback 'zh-CN'
+     * Detect preferred language: localStorage > browser navigator > fallback 'en'
      */
     function detectLang() {
         var saved = localStorage.getItem('lang');
@@ -21,7 +21,6 @@ var I18n = (function () {
         if (nav.startsWith('es')) return 'es';
         if (nav.startsWith('ru')) return 'ru';
         if (nav.startsWith('pt')) return 'pt-BR';
-        if (nav.startsWith('en')) return 'en';
         return 'en';
     }
 

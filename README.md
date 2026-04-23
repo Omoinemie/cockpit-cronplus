@@ -1,65 +1,82 @@
-# cronplus
+# Cronplus
 
-Advanced Cron Task Manager — Go 重构版
+Advanced Cron Task Manager for Linux — built with Go + Cockpit WebUI.
 
-## 架构
+[中文文档](README.zh-CN.md)
+
+## Architecture
 
 ```
-cronplusd (守护进程)
-├── Scheduler (调度器)    解析 cron 配置，触发任务
-└── Executor Pool (执行器) 每任务独立进程，超时/重试/日志
+cronplusd (daemon)
+├── Scheduler    Parses cron expressions, triggers tasks
+└── Executor Pool  Per-task process isolation, timeout/retry/logging
 
-cronplus (CLI)            命令行管理工具（实时流式输出，信号转发）
+cronplus (CLI)   Command-line management tool (real-time streaming output, signal forwarding)
 ```
 
-## 安装
+## Features
+
+- **6-field cron** with seconds support (`sec min hour day month dow`)
+- **Per-task process isolation** — each task runs in its own process group
+- **Timeout & retry** — SIGTERM → SIGKILL escalation, configurable retry with interval
+- **Run ID tracking** — every execution gets a unique ID (`YYMMDD-HHMMSS-xxxx`) for full-chain tracing
+- **Manual run** — real-time streaming output, Ctrl+C to terminate, signal forwarding to child process group
+- **Multi-user** — run tasks as any system user
+- **Cockpit WebUI** — task management, log viewer, daemon log, JSON editor, 9 languages, dark/light theme
+
+## Install
 
 ```bash
-dpkg -i cronplus_*.deb           # 后端，安装后自动启动
-dpkg -i cockpit-cronplus_*.deb   # Cockpit 前端插件
+sudo dpkg -i cronplus_<version>_<arch>.deb
+sudo dpkg -i cockpit-cronplus_<version>_<arch>.deb
 ```
 
-## CLI 使用
+The daemon starts automatically after installation.
+
+## CLI Usage
 
 ```bash
-cronplus status              # 查看状态
-cronplus list                # 列出任务
-cronplus run <id>            # 手动执行（实时流式输出，Ctrl+C 可终止）
-cronplus logs [id] [-n 20]   # 查看日志
-cronplus reload              # 热加载配置
-cronplus settings show       # 查看设置
-cronplus export              # 导出任务 JSON
-cronplus import <file>       # 导入任务
-cronplus cleanup             # 清理僵死进程
+cronplus status              # Show daemon & task status
+cronplus list                # List all tasks
+cronplus run <id>            # Run task immediately (real-time output, Ctrl+C to stop)
+cronplus logs [id] [-n 20]   # View execution logs
+cronplus reload              # Hot-reload config without restart
+cronplus settings show       # View settings
+cronplus settings set <k> <v># Update a setting
+cronplus settings reset      # Reset to defaults
+cronplus export              # Export tasks as JSON
+cronplus import <file>       # Import tasks from JSON
+cronplus cleanup             # Clean up stuck task entries
+cronplus version             # Show version
 ```
 
-### 手动运行特性
+### Manual Run
 
-- 命令输出实时流式显示（stdout + stderr）
-- 每次运行分配唯一 Run ID（格式 `YYMMDD-HHMMSS-xxxx`），全链路追踪
-- 支持 Ctrl+C 终止，自动转发信号到子进程组
-- 超时自动终止（SIGTERM → SIGKILL）
-- 执行结果自动写入任务日志
+- Real-time streaming output (stdout + stderr)
+- Unique Run ID per execution (`YYMMDD-HHMMSS-xxxx`)
+- Ctrl+C sends SIGTERM to child process group
+- Timeout auto-termination (SIGTERM → SIGKILL after 5s)
+- Results automatically written to task logs
 
-## Web UI (Cockpit 插件)
+## Web UI (Cockpit Plugin)
 
-- 任务管理：增删改查、启用/禁用、搜索过滤
-- 手动运行：独立弹窗，运行/停止按钮切换，实时输出，右上角复制按钮
-- 任务日志：分页、多维筛选（任务/用户/触发方式/状态/日期）
-- 服务日志：实时刷新、级别过滤、行数限制、清理日志
-- 任务配置：JSON 原始编辑器
-- 多语言：中文、English、日本語、한국어、Français、Deutsch、Español、Русский、Português
-- 主题：深色/浅色/跟随系统
+- **Task Management** — CRUD, enable/disable, search & filter
+- **Manual Run** — dedicated modal with run/stop toggle, real-time output, copy button
+- **Task Logs** — pagination, multi-dimensional filters (task/user/trigger/status/date)
+- **Daemon Log** — live refresh, level filtering, line limit, clear log
+- **Raw Editor** — direct JSON config editing
+- **9 Languages** — 中文, English, 日本語, 한국어, Français, Deutsch, Español, Русский, Português
+- **Themes** — Dark / Light / Follow System
 
-## 任务配置
+## Task Configuration
 
-配置文件：`/opt/cronplus/tasks.conf`（JSON 数组）
+Config file: `/opt/cronplus/tasks.conf` (JSON array)
 
 ```json
 [
   {
     "id": 1,
-    "title": "每日备份",
+    "title": "Daily Backup",
     "command": "bash /opt/backup.sh",
     "schedule": "0 0 2 * * *",
     "enabled": true,
@@ -73,88 +90,88 @@ cronplus cleanup             # 清理僵死进程
 ]
 ```
 
-### 调度格式
+### Schedule Format
 
-6 字段 cron（含秒）：`秒 分 时 日 月 周`
-
-```
-0 * * * * *        每分钟
-0 */5 * * * *      每5分钟
-0 0 2 * * *        每天凌晨2点
-0 0 0 1 * *        每月1号
-0 0 9 * * 1-5      工作日9点
-*/30 * * * * *     每30秒
-```
-
-特殊调度：
+6-field cron (with seconds): `sec min hour day month dow`
 
 ```
-@reboot             系统启动时执行（支持 reboot_delay）
+0 * * * * *        Every minute
+0 */5 * * * *      Every 5 minutes
+0 0 2 * * *        Daily at 2:00 AM
+0 0 0 1 * *        1st of every month
+0 0 9 * * 1-5      Weekdays at 9:00 AM
+*/30 * * * * *     Every 30 seconds
 ```
 
-### 任务字段
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | int | 自动分配 |
-| title | string | 任务名称 |
-| command | string | 执行命令（支持 base64 编码） |
-| schedule | string | cron 表达式或 @reboot |
-| enabled | bool | 是否启用 |
-| run_user | string | 运行用户，默认 root |
-| cwd | string | 工作目录 |
-| timeout | int | 超时秒数，0=不限 |
-| max_retries | int | 失败重试次数 |
-| retry_interval | int | 重试间隔秒数 |
-| max_concurrent | int | 最大并发数 |
-| kill_previous | bool | 新触发时杀掉上一次实例 |
-| env_vars | map | 环境变量 |
-| tags | string | 标签（逗号分隔） |
-| log_retention_days | int | 日志保留天数，0=不限 |
-| log_max_entries | int | 每任务最大日志条数，0=不限 |
-| reboot_delay | int | @reboot 延迟秒数 |
-
-## Run ID 追踪
-
-每次任务执行分配唯一标识 `YYMMDD-HHMMSS-xxxx`，贯穿整个生命周期：
+Special schedules:
 
 ```
-# Daemon 日志
-[260423-210030-a1f2] Task [1] 每日备份 — started [auto]
-[260423-210030-a1f2] Task [1] 每日备份 — ✓ success (1234ms, exit=0, attempt=1) [auto]
+@reboot             Run at system startup (supports reboot_delay)
+```
 
-# CLI 输出
-▶ [1] 每日备份 [manual] run=260423-210030-a1f2
+### Task Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | int | Auto-assigned |
+| title | string | Task name |
+| command | string | Command to execute (supports base64 encoding) |
+| schedule | string | Cron expression or @reboot |
+| enabled | bool | Whether enabled |
+| run_user | string | Run user, default root |
+| cwd | string | Working directory |
+| timeout | int | Timeout in seconds, 0=unlimited |
+| max_retries | int | Retry count on failure |
+| retry_interval | int | Retry interval in seconds |
+| max_concurrent | int | Max concurrent instances |
+| kill_previous | bool | Kill previous instance on new trigger |
+| env_vars | map | Environment variables |
+| tags | string | Comma-separated tags |
+| log_retention_days | int | Log retention days, 0=unlimited |
+| log_max_entries | int | Max log entries per task, 0=unlimited |
+| reboot_delay | int | @reboot delay in seconds |
+
+## Run ID Tracking
+
+Every execution gets a unique identifier `YYMMDD-HHMMSS-xxxx` that flows through the entire lifecycle:
+
+```
+# Daemon log
+[260423-210030-a1f2] Task [1] Daily Backup — started [auto]
+[260423-210030-a1f2] Task [1] Daily Backup — ✓ success (1234ms, exit=0, attempt=1) [auto]
+
+# CLI output
+▶ [1] Daily Backup [manual] run=260423-210030-a1f2
 ...
-✓ [success] 每日备份 (exit=0, 1234ms) [manual] run=260423-210030-a1f2
+✓ [success] Daily Backup (exit=0, 1234ms) [manual] run=260423-210030-a1f2
 ```
 
-## 日志
+## Logs
 
-- 守护进程日志：`/opt/cronplus/logs/cronplus.log`（自动轮转，可配置大小和备份数）
-- 任务日志：`/opt/cronplus/logs/task_{id}.json`（每任务独立，最多 1000 条）
+- Daemon log: `/opt/cronplus/logs/cronplus.log` (auto-rotated, configurable size & backup count)
+- Task logs: `/opt/cronplus/logs/task_{id}.json` (per-task, max 1000 entries)
 
-### 日志轮转
+### Log Rotation
 
-守护进程日志在启动时检查文件大小，超限自动轮转：
+Daemon logs are checked at startup and rotated when oversized:
 
 ```
-cronplus.log      当前日志
-cronplus.log.1    上一轮转
-cronplus.log.2    更早
+cronplus.log      Current log
+cronplus.log.1    Previous rotation
+cronplus.log.2    Older
 ```
 
-可在设置中配置：
-- 单文件大小上限（1/5/10/20/50 MB）
-- 保留备份数（1/3/5/10）
+Configurable via settings:
+- Max file size (1/5/10/20/50 MB)
+- Backup count (1/3/5/10)
 
-## 全局设置
+## Global Settings
 
-配置文件：`/opt/cronplus/settings.json`
+Config file: `/opt/cronplus/settings.json`
 
 ```json
 {
-  "language": "zh-CN",
+  "language": "en",
   "theme": "auto",
   "autoRefreshInterval": 15,
   "defaultRunUser": "root",
@@ -172,54 +189,56 @@ cronplus.log.2    更早
 }
 ```
 
-## 信号
+## Signals
 
 ```bash
-kill -HUP <pid>     热加载配置，清理僵死进程
-kill -TERM <pid>    优雅关闭
-kill -USR1 <pid>    输出运行状态到日志
+kill -HUP <pid>     Hot-reload config, clean up stuck tasks
+kill -TERM <pid>    Graceful shutdown
+kill -USR1 <pid>    Dump running status to log
 ```
 
-## 目录结构
+## Directory Structure
 
 ```
-cronplus/
-├── build-deb.sh              打包脚本
-├── deb/                      deb 安装脚本
-│   ├── postinst              安装后（创建目录、启动服务）
-│   ├── prerm                 卸载前（停止服务）
-│   └── postrm                卸载后（清理 systemd）
-├── cockpit-cronplus/         Cockpit WebUI 插件
+cockpit-cronplus/
+├── build-deb.sh              Build & packaging script
+├── VERSION                   Version file
+├── cockpit-cronplus/         Cockpit WebUI plugin
 │   ├── index.html
 │   ├── manifest.json
-│   ├── lang/                 多语言（9 种）
+│   ├── lang/                 i18n (9 languages)
 │   └── static/               CSS + JS
-└── cronplus/                 Go 源码
+└── cronplus/                 Go source code
     ├── cmd/
-    │   ├── cronplus/         CLI
-    │   └── cronplusd/        Daemon
+    │   ├── cronplus/         CLI entry
+    │   └── cronplusd/        Daemon entry
     ├── internal/
-    │   ├── executor/         进程执行器（Run ID、信号转发）
-    │   ├── scheduler/        Cron 调度器
-    │   └── store/            文件存储层
-    ├── pkg/model/            数据模型
+    │   ├── executor/         Process executor (Run ID, signal forwarding)
+    │   ├── scheduler/        Cron scheduler
+    │   └── store/            File-based storage
+    ├── pkg/model/            Data models
     ├── cronplus.service      systemd unit
     ├── Makefile
     └── go.mod
 ```
 
-## 构建
+## Build
 
 ```bash
-# 需要 Go 1.23+
-export PATH=$PATH:/usr/local/go/bin
-
-# 编译
+# Requires Go 1.23+
 cd cronplus && make build
 
-# 打包 deb（输出到项目根目录）
-cd .. && bash build-deb.sh
+# Package deb (output to dist/)
+bash build-deb.sh [amd64|arm64]
 ```
+
+### GitHub Actions
+
+The project includes a CI workflow (`build.yml`) that:
+- Accepts optional manual version input (reads `VERSION` file if empty)
+- Builds for amd64 and arm64
+- Packages `.deb` files
+- Creates GitHub Release with checksums
 
 ## License
 

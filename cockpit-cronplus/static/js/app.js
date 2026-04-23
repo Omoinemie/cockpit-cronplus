@@ -72,7 +72,7 @@
 
     // ===== Settings =====
     var SETTINGS_DEFAULTS = {
-        language: 'zh-CN',
+        language: 'en',
         theme: 'auto',
         autoRefreshInterval: 15,
         logMaxBytes: 10485760,
@@ -130,7 +130,7 @@
 
     function openSettingsModal() {
         var s = appSettings;
-        $('#setLanguage').value = s.language || 'zh-CN';
+        $('#setLanguage').value = s.language || 'en';
         $('#setTheme').value = s.theme || 'auto';
         $('#setDefaultUser').value = s.defaultRunUser || 'root';
         $('#setDefaultTimeout').value = s.defaultTimeout || 0;
@@ -600,7 +600,7 @@
                 '<input type="checkbox" ' + (task.enabled !== false ? 'checked' : '') + ' data-action="toggle" data-index="' + idx + '">' +
                 '<span class="toggle-slider"></span></label>' +
                 '<div class="task-info">' +
-                (task.title ? '<div class="task-title">' + Utils.escHtml(task.title) + '</div>' : '') +
+                (task.title ? '<div class="task-title"><span class="task-id-badge">#' + task.id + '</span>' + Utils.escHtml(task.title) + '</div>' : '<div class="task-title"><span class="task-id-badge">#' + task.id + '</span></div>') +
                 '<div class="task-command" title="' + Utils.escHtml(task.command || '') + '">' + Utils.escHtml(firstLine) + '</div>' +
                 '<div class="task-meta">' +
                 '<span class="task-schedule">' + Utils.escHtml(task.schedule || '') + '</span>' +
@@ -677,7 +677,7 @@
                 var key = l.task_id || l.command;
                 if (!seen[key]) {
                     seen[key] = true;
-                    var label = l.title || (l.command || '').slice(0, 50);
+                    var label = '#' + (l.task_id || '?') + ' ' + (l.title || (l.command || '').slice(0, 50));
                     taskFilter.innerHTML += '<option value="' + Utils.escHtml(String(l.task_id || '')) + '">' + Utils.escHtml(label) + '</option>';
                 }
             });
@@ -738,6 +738,7 @@
                     '<div class="log-meta">' +
                     '<span class="log-time">' + Utils.escHtml(log.created_at || '') + '</span>' +
                     (log.run_id ? '<span class="log-run-id">' + Utils.escHtml(log.run_id) + '</span>' : '') +
+                    (log.task_id ? '<span class="log-task-id">#' + log.task_id + '</span>' : '') +
                     '<span class="log-user"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> ' + Utils.escHtml(log.run_user || 'root') + '</span>' +
                     '<span class="log-trigger ' + triggerClass + '">' + triggerLabel + '</span>' +
                     '<span class="log-status-label ' + log.status + '">' + statusLabel + attemptLabel + '</span>' +
