@@ -517,17 +517,41 @@ body {
 .next-run-item .run-relative { color: var(--text-muted); font-size: 12px; margin-left: auto; }
 .next-runs .special-note { color: var(--text-muted); font-style: italic; padding: 8px 12px; }
 
-/* ===== Output Modal ===== */
-.output-content {
-    background: var(--bg-primary); border-radius: var(--radius); padding: 20px;
-    font-family: var(--font-mono); font-size: 13px; line-height: 1.6; min-height: 150px;
-    max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+/* ===== Output Modal (Terminal Style) ===== */
+.terminal-container {
+    background: #0d1117; border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    overflow: hidden;
 }
-.output-running { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 40px; color: var(--text-secondary); }
-.spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+.terminal-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 16px; background: #161b22; border-bottom: 1px solid var(--border);
+    font-size: 12px;
+}
+.terminal-status {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-weight: 500;
+}
+.terminal-status.running { color: var(--accent); }
+.terminal-status.success { color: var(--success); }
+.terminal-status.error { color: var(--error); }
+.spinner-terminal {
+    width: 12px; height: 12px; border: 2px solid rgba(108,140,255,0.3);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite; display: inline-block;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
-.output-success { color: var(--success); }
-.output-error { color: var(--error); }
+.terminal-duration {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+}
+.terminal-output {
+    margin: 0; padding: 14px 16px; min-height: 200px; max-height: 60vh;
+    overflow-y: auto; font-family: var(--font-mono); font-size: 13px;
+    line-height: 1.6; color: #c9d1d9; white-space: pre-wrap; word-break: break-all;
+    background: #0d1117;
+}
+[data-theme="light"] .terminal-container { background: #f6f8fa; }
+[data-theme="light"] .terminal-toolbar { background: #e8ecf0; border-color: #d1d5db; }
+[data-theme="light"] .terminal-output { background: #f6f8fa; color: #24292f; }
 
 /* ===== Full Width Select ===== */
 .full-width { width: 100%; }
@@ -607,6 +631,18 @@ body {
     .user-input-combo { flex-direction: column; gap: 6px; }
     .user-input-combo .select-input { width: 100%; }
     .user-input-combo .custom-user-input { width: 100%; }
+
+    /* Prevent select dropdowns from overflowing on tablet */
+    select.filter-input,
+    select.settings-select,
+    .select-input {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .modal select {
+        max-width: calc(100vw - 48px);
+    }
 }
 
 /* ===== Responsive: Mobile (≤480px) ===== */
@@ -615,7 +651,6 @@ body {
     .header-left h1 { font-size: 15px; }
     .header-right { gap: 4px; }
     .user-badge { font-size: 11px; padding: 3px 8px; }
-    .lang-switch { font-size: 11px; padding: 4px 6px; }
     .btn-icon { padding: 6px; }
     .btn-icon svg { width: 16px; height: 16px; }
     .tab-bar { padding: 0 8px; gap: 0; }
@@ -666,6 +701,30 @@ body {
     .radio-card-body strong { font-size: 13px; }
     .radio-card-body span { font-size: 11px; }
     .daemon-log-viewer { font-size: 11px; min-height: 200px; padding: 8px 10px; }
+
+    /* Prevent select dropdowns from overflowing */
+    select.filter-input,
+    select.settings-select,
+    .select-input,
+    .lang-switch,
+    #inputUser,
+    #setDefaultUser,
+    #cleanupTaskId,
+    #cleanupUser,
+    #cleanupStatus {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    /* Ensure modal selects don't overflow screen */
+    .modal select {
+        max-width: calc(100vw - 48px);
+    }
+    /* Daemon log controls wrap properly */
+    .daemon-log-controls select {
+        max-width: 100%;
+        min-width: 0;
+    }
 }
 
 /* ===== Language Switcher ===== */
@@ -933,7 +992,7 @@ input[type="date"].filter-input::-webkit-calendar-picker-indicator:hover {
     flex: 1; min-width: 0; max-width: 200px;
     background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius);
     color: var(--text-primary); font-size: 13px; font-family: var(--font-mono); padding: 8px 12px;
-    text-align: right; outline: none; transition: border-color var(--transition);
+    text-align: left; outline: none; transition: border-color var(--transition);
 }
 .settings-input:focus { border-color: var(--border-focus); }
 .modal-footer-right { display: flex; gap: 10px; margin-left: auto; }

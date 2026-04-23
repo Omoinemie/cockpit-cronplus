@@ -18,6 +18,7 @@
   "btn.reset": "Сбросить",
   "btn.cleanupLogs": "Очистить журналы",
   "btn.close": "Закрыть",
+  "btn.terminate": "Завершить",
   "btn.copy": "Копировать",
   "btn.copied": "Скопировано",
   "btn.confirmCleanup": "Подтвердить очистку",

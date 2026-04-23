@@ -28,6 +28,7 @@ class Scheduler:
         self._last_conf_mtime = 0
         self._last_cleanup = 0
         self._task_last_run = {}  # task_id → datetime of last scheduled run
+        self._cached_tasks = None  # cached task list, invalidated on config change
 
     def start(self):
         if self._running:
@@ -49,6 +50,7 @@ class Scheduler:
     def wakeup(self):
         """Force re-read of config and reschedule."""
         self._last_conf_mtime = 0
+        self._cached_tasks = None
         with self._cond:
             self._cond.notify_all()
 
@@ -224,11 +226,29 @@ class Scheduler:
                 time.sleep(5)
 
     def _load_tasks(self):
+        """Load tasks from config, with mtime-based caching.
+
+        Only re-parses the file when its modification time changes,
+        making hot-reload reliable even without SIGHUP.
+        """
         try:
-            return read_config(self.conf_path)
-        except Exception as e:
-            logger.error(f"Failed to load config: {e}")
-            return []
+            mtime = os.path.getmtime(self.conf_path)
+        except OSError:
+            mtime = 0
+
+        if mtime != self._last_conf_mtime or self._cached_tasks is None:
+            try:
+                self._cached_tasks = read_config(self.conf_path)
+                self._last_conf_mtime = mtime
+                if self._cached_tasks:
+                    logger.info(f"Config reloaded: {len(self._cached_tasks)} tasks (mtime={mtime})")
+            except Exception as e:
+                logger.error(f"Failed to load config: {e}")
+                # Keep cached tasks on parse error (don't lose existing schedule)
+                if self._cached_tasks is None:
+                    self._cached_tasks = []
+
+        return self._cached_tasks
 
     def _execute_task(self, task):
         task_id = task.get('id', '?')

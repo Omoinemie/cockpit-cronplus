@@ -18,6 +18,7 @@
   "btn.reset": "重置",
   "btn.cleanupLogs": "清理日志",
   "btn.close": "关闭",
+  "btn.terminate": "终止",
   "btn.copy": "复制",
   "btn.copied": "已复制",
   "btn.confirmCleanup": "确认清理",

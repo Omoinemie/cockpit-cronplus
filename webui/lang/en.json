@@ -18,6 +18,7 @@
   "btn.reset": "Reset",
   "btn.cleanupLogs": "Cleanup Logs",
   "btn.close": "Close",
+  "btn.terminate": "Terminate",
   "btn.copy": "Copy",
   "btn.copied": "Copied",
   "btn.confirmCleanup": "Confirm Cleanup",

@@ -18,6 +18,7 @@
   "btn.reset": "초기화",
   "btn.cleanupLogs": "로그 정리",
   "btn.close": "닫기",
+  "btn.terminate": "중지",
   "btn.copy": "복사",
   "btn.copied": "복사됨",
   "btn.confirmCleanup": "정리 실행",

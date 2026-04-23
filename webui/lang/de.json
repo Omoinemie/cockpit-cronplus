@@ -18,6 +18,7 @@
   "btn.reset": "Zurücksetzen",
   "btn.cleanupLogs": "Protokolle aufräumen",
   "btn.close": "Schließen",
+  "btn.terminate": "Beenden",
   "btn.copy": "Kopieren",
   "btn.copied": "Kopiert",
   "btn.confirmCleanup": "Aufräumen bestätigen",

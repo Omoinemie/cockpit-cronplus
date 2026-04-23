@@ -19,17 +19,7 @@
         </div>
         <div class="header-right">
             <span id="currentUser" class="user-badge"></span>
-            <select id="langSwitch" class="lang-switch" title="Language">
-                <option value="zh-CN">中文</option>
-                <option value="en">English</option>
-                <option value="ja">日本語</option>
-                <option value="ko">한국어</option>
-                <option value="fr">Français</option>
-                <option value="de">Deutsch</option>
-                <option value="es">Español</option>
-                <option value="ru">Русский</option>
-                <option value="pt-BR">Português</option>
-            </select>
+
             <button id="btnExport" class="btn btn-icon" data-i18n-title="btn.export" title="导出 JSON">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
@@ -462,22 +452,27 @@
         </div>
     </div>
 
-    <!-- Modal: Task Output -->
+    <!-- Modal: Task Output (terminal-style) -->
     <div id="outputModal" class="modal-overlay" style="display:none">
         <div class="modal modal-wide">
             <div class="modal-header">
                 <h2 data-i18n="modal.taskOutput">任务输出</h2>
                 <button id="btnCloseOutput" class="btn-close">&times;</button>
             </div>
-            <div class="modal-body">
-                <div id="outputContent" class="output-content">
-                    <div class="output-running">
-                        <div class="spinner"></div>
-                        <span data-i18n="output.executing">正在执行...</span>
+            <div class="modal-body" style="padding:0">
+                <div class="terminal-container">
+                    <div class="terminal-toolbar">
+                        <span id="outputStatus" class="terminal-status running">
+                            <span class="spinner-terminal"></span>
+                            <span data-i18n="output.executing">正在执行...</span>
+                        </span>
+                        <span id="outputDuration" class="terminal-duration"></span>
                     </div>
+                    <pre id="outputContent" class="terminal-output"></pre>
                 </div>
             </div>
             <div class="modal-footer">
+                <button id="btnTerminateOutput" class="btn btn-danger btn-sm" style="display:none" data-i18n="btn.terminate">终止</button>
                 <button id="btnCloseOutput2" class="btn btn-secondary" data-i18n="btn.close">关闭</button>
             </div>
         </div>

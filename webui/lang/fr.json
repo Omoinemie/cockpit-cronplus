@@ -18,6 +18,7 @@
   "btn.reset": "Réinitialiser",
   "btn.cleanupLogs": "Nettoyer les journaux",
   "btn.close": "Fermer",
+  "btn.terminate": "Arrêter",
   "btn.copy": "Copier",
   "btn.copied": "Copié",
   "btn.confirmCleanup": "Confirmer le nettoyage",

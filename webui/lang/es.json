@@ -18,6 +18,7 @@
   "btn.reset": "Restablecer",
   "btn.cleanupLogs": "Limpiar registros",
   "btn.close": "Cerrar",
+  "btn.terminate": "Terminar",
   "btn.copy": "Copiar",
   "btn.copied": "Copiado",
   "btn.confirmCleanup": "Confirmar limpieza",

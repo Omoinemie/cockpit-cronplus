@@ -18,6 +18,7 @@
   "btn.reset": "リセット",
   "btn.cleanupLogs": "ログ整理",
   "btn.close": "閉じる",
+  "btn.terminate": "中止",
   "btn.copy": "コピー",
   "btn.copied": "コピー済み",
   "btn.confirmCleanup": "整理実行",

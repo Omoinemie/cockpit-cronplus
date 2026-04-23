@@ -36,6 +36,8 @@
     var logPage = 1;
     var LOG_PAGE_SIZE = 20;
     var appSettings = {};  // loaded from settings.json
+    var runningProc = null;  // currently running cockpit.spawn process for task execution
+    var runStartTime = 0;    // timestamp when current run started
 
     var $ = Utils.$;
     var $$ = Utils.$$;
@@ -370,11 +372,9 @@
         if (statusEl) statusEl.textContent = I18n.t('daemon.cleared');
     }
 
-    // ===== Language Switcher =====
+    // ===== Language Switcher (now only in settings modal) =====
     function initLangSwitcher() {
-        var lang = I18n.getLang();
-        var el = $('#langSwitch');
-        if (el) el.value = lang;
+        // Language is managed via settings modal only
     }
 
     // ===== Auto Refresh =====
@@ -476,7 +476,18 @@
         try {
             var encoded = tasks.map(Utils.encodeTaskForSave);
             await Utils.shellWriteJson(CONF_FILE, encoded);
-            try { await Utils.spawn('bash', ['-c', 'cronplus reload 2>/dev/null || systemctl reload cronplus 2>/dev/null || true']); } catch (e) { /* */ }
+            // Signal daemon to reload config (SIGHUP = hot reload, no restart)
+            try {
+                await cockpit.spawn(
+                    ['bash', '-c',
+                     'PID=$(systemctl show -p MainPID --value cronplus 2>/dev/null); ' +
+                     'if [ -n "$PID" ] && [ "$PID" -gt 0 ] 2>/dev/null; then ' +
+                     '  kill -HUP $PID && echo "SIGHUP sent to pid $PID"; ' +
+                     'else ' +
+                     '  systemctl restart cronplus 2>/dev/null || true; fi'],
+                    { err: 'message', environ: ['LC_ALL=C'] }
+                );
+            } catch (e) { /* signal best-effort */ }
             showToast(I18n.t('task.saved'), 'success');
         } catch (err) {
             showToast(I18n.t('task.saveFailed') + ': ' + err.message, 'error');
@@ -784,13 +795,69 @@
         var task = tasks[index];
         if (!task || !task.id) return;
         showOutputModal(task.command, task.run_user || 'root');
+
+        // Use cockpit.spawn with stream callbacks for real-time output
+        var outputEl = $('#outputContent');
+        var statusEl = $('#outputStatus');
+        var durationEl = $('#outputDuration');
+        var terminateBtn = $('#btnTerminateOutput');
+        var outputText = '';
+        runStartTime = Date.now();
+
+        // Duration timer
+        var durationTimer = setInterval(function () {
+            if (runStartTime) {
+                var elapsed = ((Date.now() - runStartTime) / 1000).toFixed(1);
+                durationEl.textContent = elapsed + 's';
+            }
+        }, 100);
+
+        // Show terminate button
+        terminateBtn.style.display = '';
+
         try {
-            var result = await Utils.spawn('cronplus', ['run', String(task.id)]);
-            setOutputContent(result || I18n.t('output.noOutput'), 'success');
-            await loadLogs();
-            renderTasks();
+            var proc = cockpit.spawn(
+                ['cronplus', 'run', String(task.id)],
+                { err: 'out', environ: ['LC_ALL=C'] }
+            );
+            runningProc = proc;
+
+            proc.stream(function (data) {
+                outputText += data;
+                outputEl.textContent = outputText;
+                // Auto-scroll to bottom
+                outputEl.scrollTop = outputEl.scrollHeight;
+            });
+
+            proc.then(function () {
+                // Success
+                clearInterval(durationTimer);
+                runningProc = null;
+                terminateBtn.style.display = 'none';
+                statusEl.className = 'terminal-status success';
+                statusEl.innerHTML = '<span>✓</span> <span>' + I18n.t('output.success') + '</span>';
+                durationEl.textContent = ((Date.now() - runStartTime) / 1000).toFixed(1) + 's';
+                loadLogs().then(function () { renderTasks(); });
+            }, function (err) {
+                // Error
+                clearInterval(durationTimer);
+                runningProc = null;
+                terminateBtn.style.display = 'none';
+                statusEl.className = 'terminal-status error';
+                statusEl.innerHTML = '<span>✗</span> <span>' + I18n.t('output.failed') + '</span>';
+                durationEl.textContent = ((Date.now() - runStartTime) / 1000).toFixed(1) + 's';
+                if (err && err.message && !outputText) {
+                    outputEl.textContent = err.message;
+                }
+                loadLogs().then(function () { renderTasks(); });
+            });
         } catch (err) {
-            setOutputContent(err.message || err.toString(), 'error');
+            clearInterval(durationTimer);
+            runningProc = null;
+            terminateBtn.style.display = 'none';
+            statusEl.className = 'terminal-status error';
+            statusEl.innerHTML = '<span>✗</span> <span>' + I18n.t('output.failed') + '</span>';
+            outputEl.textContent = err.message || err.toString();
             await loadLogs();
             renderTasks();
         }
@@ -1090,7 +1157,18 @@
         try {
             JSON.parse(content);
             await Utils.spawn('bash', ['-c', 'printf %s ' + Utils.shellQuote(content) + ' | tee ' + CONF_FILE + ' > /dev/null']);
-            try { await Utils.spawn('cronplus', ['reload']); } catch (e) { /* */ }
+            // Signal daemon to reload config (SIGHUP = hot reload, no restart)
+            try {
+                await cockpit.spawn(
+                    ['bash', '-c',
+                     'PID=$(systemctl show -p MainPID --value cronplus 2>/dev/null); ' +
+                     'if [ -n "$PID" ] && [ "$PID" -gt 0 ] 2>/dev/null; then ' +
+                     '  kill -HUP $PID && echo "SIGHUP sent to pid $PID"; ' +
+                     'else ' +
+                     '  systemctl restart cronplus 2>/dev/null || true; fi'],
+                    { err: 'message', environ: ['LC_ALL=C'] }
+                );
+            } catch (e) { /* signal best-effort */ }
             $('#rawStatus').textContent = I18n.t('raw.saved');
             $('#rawStatus').className = 'status-text saved';
             showToast(I18n.t('toast.configSaved'), 'success');
@@ -1112,18 +1190,26 @@
     function showModal(show) { $('#taskModal').style.display = show ? 'flex' : 'none'; }
 
     function showOutputModal(command, user) {
-        $('#outputContent').innerHTML = '<div class="output-running"><div class="spinner"></div><span>' +
-            I18n.t('output.executingAs', { command: Utils.escHtml(command), user: Utils.escHtml(user) }) + '</span></div>';
+        var outputEl = $('#outputContent');
+        var statusEl = $('#outputStatus');
+        var durationEl = $('#outputDuration');
+        var terminateBtn = $('#btnTerminateOutput');
+        outputEl.textContent = '';
+        statusEl.className = 'terminal-status running';
+        statusEl.innerHTML = '<span class="spinner-terminal"></span> <span>' + I18n.t('output.executing') + '</span>';
+        durationEl.textContent = '';
+        terminateBtn.style.display = 'none';
         $('#outputModal').style.display = 'flex';
     }
 
-    function setOutputContent(text, status) {
-        var cls = status === 'success' ? 'output-success' : 'output-error';
-        var label = status === 'success' ? I18n.t('output.success') : I18n.t('output.failed');
-        $('#outputContent').innerHTML = '<div class="' + cls + '" style="margin-bottom:12px;font-weight:600">' + label + '</div>' + Utils.escHtml(text || I18n.t('output.noOutput'));
+    function closeOutputModal() {
+        if (runningProc) {
+            try { runningProc.close('kill'); } catch (e) { /* */ }
+            runningProc = null;
+        }
+        runStartTime = 0;
+        $('#outputModal').style.display = 'none';
     }
-
-    function closeOutputModal() { $('#outputModal').style.display = 'none'; }
 
     function showToast(message, type) {
         var container = $('#toastContainer');
@@ -1266,21 +1352,7 @@
             });
         });
 
-        // Language switcher
-        $('#langSwitch')?.addEventListener('change', function () {
-            var lang = this.value;
-            I18n.switchLang(lang).then(function () {
-                // Re-render dynamic content
-                renderTasks();
-                renderLogs();
-                populateUserSelects();
-                updateCleanupLabels();
-            });
-            // Persist to settings.json
-            appSettings.language = lang;
-            Utils.shellWriteJson(SETTINGS_FILE, appSettings).catch(function () {});
-        });
-
+        // Language switch is now only in Settings modal
         $('#btnRefresh').addEventListener('click', async function () {
             if (refreshing) return;
             refreshing = true;
@@ -1334,6 +1406,12 @@
 
         $('#btnCloseOutput').addEventListener('click', closeOutputModal);
         $('#btnCloseOutput2').addEventListener('click', closeOutputModal);
+        $('#btnTerminateOutput').addEventListener('click', function () {
+            if (runningProc) {
+                try { runningProc.close('kill'); } catch (e) { /* */ }
+                runningProc = null;
+            }
+        });
 
         $('#btnExport').addEventListener('click', exportConfig);
         $('#btnTheme').addEventListener('click', function () {
