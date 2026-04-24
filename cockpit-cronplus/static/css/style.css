@@ -528,7 +528,7 @@ body {
 }
 .modal {
     background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg);
-    width: 100%; max-width: 780px; box-shadow: var(--shadow); animation: modalIn 0.2s ease;
+    width: 100%; max-width: 860px; box-shadow: var(--shadow); animation: modalIn 0.2s ease;
 }
 .modal-wide { max-width: 900px; width: 90vw; }
 @keyframes modalIn { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
@@ -564,29 +564,31 @@ body {
 .form-group input[type="checkbox"] { margin-right: 8px; accent-color: var(--accent); }
 
 /* ===== Schedule Presets ===== */
-.schedule-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; justify-content: center; }
+.schedule-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; justify-content: center; align-items: center; }
 .preset-btn {
-    padding: 6px 14px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 20px;
+    padding: 5px 11px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 16px;
     color: var(--text-secondary); font-size: 12px; font-family: var(--font); cursor: pointer; transition: all var(--transition);
+    white-space: nowrap; line-height: 1.4;
 }
 .preset-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(108,140,255,0.08); }
 .preset-btn.active { background: rgba(108,140,255,0.15); border-color: var(--accent); color: var(--accent); }
 
 /* ===== Cron Fields ===== */
-.cron-fields { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }
+.cron-fields { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; max-width: 100%; }
 .cron-actions { display: flex; justify-content: flex-end; margin-bottom: 16px; }
 .cron-actions .btn { font-size: 12px; padding: 4px 10px; opacity: 0.7; }
 .cron-actions .btn:hover { opacity: 1; }
-.preset-btn-reset { opacity: 0.7 !important; border-style: dashed !important; min-width: auto !important; padding: 6px 10px !important; border-color: var(--warning) !important; color: var(--warning) !important; }
+.preset-btn-reset { opacity: 0.7 !important; border-style: dashed !important; min-width: auto !important; padding: 5px 10px !important; border-color: var(--warning) !important; color: var(--warning) !important; font-size: 11px !important; display: inline-flex !important; align-items: center !important; gap: 4px !important; }
+.preset-btn-reset svg { flex-shrink: 0; }
 .preset-btn-reset:hover { opacity: 1 !important; background: rgba(251,191,36,0.1) !important; border-color: var(--warning) !important; }
 .cron-fields-wrapper { text-align: center; }
 .output-task-name { font-size: 13px; font-weight: 400; color: var(--text-secondary); margin-left: 8px; }
-.cron-field { text-align: center; }
+.cron-field { text-align: center; min-width: 0; }
 .cron-field label { display: block; font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
 .cron-field input {
     width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius);
     color: var(--text-primary); font-size: 16px; font-family: var(--font-mono); text-align: center;
-    padding: 10px 4px; outline: none; transition: border-color var(--transition);
+    padding: 10px 2px; outline: none; transition: border-color var(--transition); min-width: 0;
 }
 .cron-field input:focus { border-color: var(--border-focus); }
 .cron-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block; }
@@ -594,7 +596,7 @@ body {
 /* ===== Cron Preview ===== */
 .cron-preview {
     background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 12px 16px; font-family: var(--font-mono); font-size: 18px; text-align: center; color: var(--accent); letter-spacing: 2px;
+    padding: 12px 16px; font-family: var(--font-mono); font-size: 18px; text-align: center; color: var(--accent); letter-spacing: 4px;
 }
 .cron-description { font-size: 12px; color: var(--text-muted); text-align: center; margin-top: 8px; }
 

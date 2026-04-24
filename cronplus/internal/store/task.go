@@ -135,6 +135,24 @@ func (s *Store) ResetTaskRunSeq(id int) error {
 	return s.UpdateTaskRunSeq(id, 0)
 }
 
+// ToggleTaskEnabled sets the enabled state of a task to a specific value.
+func (s *Store) ToggleTaskEnabled(id int, enabled bool) error {
+	s.taskMu.Lock()
+	defer s.taskMu.Unlock()
+
+	var tasks []model.Task
+	if _, err := ReadJSON(s.ConfPath, &tasks); err != nil {
+		return err
+	}
+	for i := range tasks {
+		if tasks[i].ID == id {
+			tasks[i].Enabled = enabled
+			return writeJSON(s.ConfPath, tasks)
+		}
+	}
+	return fmt.Errorf("task %d not found", id)
+}
+
 // ToggleTask flips the enabled state of a task.
 func (s *Store) ToggleTask(id int) (*model.Task, error) {
 	s.taskMu.Lock()

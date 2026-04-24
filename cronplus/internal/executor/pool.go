@@ -159,6 +159,13 @@ func (p *Pool) execute(task model.Task, trigger string) {
 		if err := p.store.UpdateTaskRunSeq(taskID, task.RunSeq); err != nil {
 			log.Printf("[%s] Pool: failed to update RunSeq for task [%d]: %v", runID, taskID, err)
 		}
+		// Auto-disable task when max runs reached
+		if task.MaxRuns > 0 && task.RunSeq >= task.MaxRuns {
+			log.Printf("[%s] Task [%d] reached max runs (%d), disabling", runID, taskID, task.MaxRuns)
+			if err := p.store.ToggleTaskEnabled(taskID, false); err != nil {
+				log.Printf("[%s] Pool: failed to disable task [%d]: %v", runID, taskID, err)
+			}
+		}
 	}
 
 	// Concurrency check

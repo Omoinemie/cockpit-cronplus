@@ -62,7 +62,7 @@
   "form.killPrevious": "杀掉上一个正在运行的实例",
   "form.killPreviousHint": "当达到并发上限时，自动终止已有的运行实例并启动新的（适合避免任务堆积）",
   "form.maxRuns": "运行次数上限",
-  "form.maxRunsHint": "自动执行达到此次数后停止调度。0 = 不限制",
+  "form.maxRunsHint": "自动执行达到此次数后自动关闭任务。0 = 不限制",
   "form.runCount": "已运行次数",
   "form.runCountHint": "当前已自动执行的次数（从任务序号读取，只读）",
   "form.tags": "标签 (逗号分隔)",

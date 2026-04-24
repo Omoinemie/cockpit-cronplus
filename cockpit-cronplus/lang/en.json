@@ -62,7 +62,7 @@
   "form.killPrevious": "Kill previous running instance",
   "form.killPreviousHint": "When concurrency limit is reached, terminate existing instance and start new one",
   "form.maxRuns": "Max runs",
-  "form.maxRunsHint": "Stop scheduling after this many auto-executions. 0 = unlimited",
+  "form.maxRunsHint": "Auto-disable task after this many runs. 0 = unlimited",
   "form.runCount": "Run count",
   "form.runCountHint": "Number of times this task has auto-executed (read-only)",
   "form.tags": "Tags (comma separated)",

@@ -1790,6 +1790,7 @@
                 $$('.preset-btn').forEach(function (b) { b.classList.remove('active'); });
                 btn.classList.add('active');
                 var p = btn.dataset.preset;
+                if (!p) return; // skip reset button (no data-preset)
                 if (p === '@reboot') {
                     $('#cronSec').value = '0'; $('#cronMin').value = p;
                     $('#cronHour').value = ''; $('#cronDay').value = '';
