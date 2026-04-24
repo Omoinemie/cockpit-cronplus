@@ -1094,6 +1094,8 @@
         $('#inputRetryInterval').value = task.retry_interval || 60;
         $('#inputMaxConcurrent').value = task.max_concurrent || 1;
         $('#inputKillPrevious').checked = !!task.kill_previous;
+        $('#inputMaxRuns').value = task.max_runs || 0;
+        $('#inputRunCount').value = task.run_count || 0;
         $('#inputTags').value = task.tags || '';
         $('#inputLogDays').value = task.log_retention_days || 0;
         $('#inputLogMax').value = task.log_max_entries || 0;
@@ -1148,6 +1150,8 @@
         $('#inputRetryInterval').value = appSettings.defaultRetryInterval || 60;
         $('#inputMaxConcurrent').value = 1;
         $('#inputKillPrevious').checked = false;
+        $('#inputMaxRuns').value = 0;
+        $('#inputRunCount').value = 0;
         $('#inputTags').value = '';
         $('#inputLogDays').value = 0; $('#inputLogMax').value = 0;
         $('#inputRebootDelay').value = 0;
@@ -1197,6 +1201,8 @@
             retry_interval: parseInt($('#inputRetryInterval').value) || 60,
             max_concurrent: parseInt($('#inputMaxConcurrent').value) || 1,
             kill_previous: $('#inputKillPrevious').checked,
+            max_runs: parseInt($('#inputMaxRuns').value) || 0,
+            run_count: parseInt($('#inputRunCount').value) || 0,
             tags: $('#inputTags').value.trim(),
             log_retention_days: parseInt($('#inputLogDays').value) || 0,
             log_max_entries: parseInt($('#inputLogMax').value) || 0,
@@ -1371,6 +1377,7 @@
         var durationEl = $('#outputDuration');
         var btn = $('#btnRunStopOutput');
         var copyBtn = $('#btnCopyOutput');
+        var taskNameEl = $('#outputTaskName');
         currentRunID = generateRunID();
         outputEl.textContent = '$ ' + command + '\n';
         statusEl.className = 'terminal-status';
@@ -1379,6 +1386,13 @@
         btn.textContent = I18n.t('btn.run');
         btn.className = 'btn btn-primary btn-sm';
         copyBtn.title = I18n.t('btn.copyCommand');
+        // Show task name in header
+        if (taskNameEl) {
+            var task = pendingRunTask;
+            var name = '';
+            if (task) name = task.title || task.command.split('\n')[0].slice(0, 60);
+            taskNameEl.textContent = name ? '— ' + name : '';
+        }
         runningProc = null;
         runStartTime = 0;
         $('#outputModal').style.display = 'flex';
@@ -1709,14 +1723,60 @@
             });
         });
 
-        ['cronSec', 'cronMin', 'cronHour', 'cronDay', 'cronMonth', 'cronDow'].forEach(function (id) {
+        // Auto-fill: when a higher field changes from * to specific, set lower fields * → 0
+        // Field hierarchy (high→low): month → day → hour → min → sec
+        var cronFieldOrder = ['cronSec', 'cronMin', 'cronHour', 'cronDay', 'cronMonth', 'cronDow'];
+        var cronFieldLower = {
+            'cronMonth': ['cronDay', 'cronHour', 'cronMin', 'cronSec'],
+            'cronDay':   ['cronHour', 'cronMin', 'cronSec'],
+            'cronHour':  ['cronMin', 'cronSec'],
+            'cronMin':   ['cronSec'],
+            'cronSec':   [],
+            'cronDow':   []
+        };
+        var cronFieldPrev = {}; // track previous values
+
+        cronFieldOrder.forEach(function (id) {
             var el = $('#' + id);
-            if (el) el.addEventListener('input', function () {
+            if (!el) return;
+            cronFieldPrev[id] = el.value;
+            el.addEventListener('focus', function () {
+                cronFieldPrev[id] = el.value;
+            });
+            el.addEventListener('input', function () {
                 $$('.preset-btn').forEach(function (b) { b.classList.remove('active'); });
                 $('#rebootDelayGroup').style.display = 'none';
                 $('.cron-fields').style.display = '';
+
+                var prev = cronFieldPrev[id] || '*';
+                var curr = el.value.trim();
+                // Auto-fill: if changed from * to a specific value, set lower fields to 0
+                if (prev === '*' && curr !== '*' && curr !== '' && cronFieldLower[id]) {
+                    cronFieldLower[id].forEach(function (lowerId) {
+                        var lowerEl = $('#' + lowerId);
+                        if (lowerEl && lowerEl.value.trim() === '*') {
+                            lowerEl.value = '0';
+                        }
+                    });
+                }
+                cronFieldPrev[id] = curr;
+
                 CronUtil.updatePreview(); updateNextRuns();
             });
+        });
+
+        // Reset button: restore all cron fields to defaults
+        $('#btnResetCron').addEventListener('click', function () {
+            $$('.preset-btn').forEach(function (b) { b.classList.remove('active'); });
+            $('#cronSec').value = '0';
+            $('#cronMin').value = '*';
+            $('#cronHour').value = '*';
+            $('#cronDay').value = '*';
+            $('#cronMonth').value = '*';
+            $('#cronDow').value = '*';
+            $('#rebootDelayGroup').style.display = 'none';
+            $('.cron-fields').style.display = '';
+            CronUtil.updatePreview(); updateNextRuns();
         });
 
         $('#taskList').addEventListener('click', function (e) {

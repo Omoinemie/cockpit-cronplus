@@ -521,7 +521,7 @@ body {
     background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg);
     width: 100%; max-width: 780px; box-shadow: var(--shadow); animation: modalIn 0.2s ease;
 }
-.modal-wide { max-width: 720px; }
+.modal-wide { max-width: 900px; width: 90vw; }
 @keyframes modalIn { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border); }
 .modal-header h2 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
@@ -564,7 +564,13 @@ body {
 .preset-btn.active { background: rgba(108,140,255,0.15); border-color: var(--accent); color: var(--accent); }
 
 /* ===== Cron Fields ===== */
-.cron-fields { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 20px; }
+.cron-fields { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }
+.cron-actions { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+.cron-actions .btn { font-size: 12px; padding: 4px 10px; opacity: 0.7; }
+.cron-actions .btn:hover { opacity: 1; }
+.preset-btn-reset { opacity: 0.5 !important; border-style: dashed !important; min-width: auto !important; padding: 6px 10px !important; }
+.preset-btn-reset:hover { opacity: 1 !important; }
+.output-task-name { font-size: 13px; font-weight: 400; color: var(--text-secondary); margin-left: 8px; }
 .cron-field { text-align: center; }
 .cron-field label { display: block; font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
 .cron-field input {
@@ -620,7 +626,7 @@ body {
     font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
 }
 .terminal-output {
-    margin: 0; padding: 14px 16px; min-height: 200px; max-height: 60vh;
+    margin: 0; padding: 14px 16px; min-height: 350px; max-height: 75vh;
     overflow-y: auto; font-family: var(--font-mono); font-size: 13px;
     line-height: 1.6; color: #c9d1d9; white-space: pre-wrap; word-break: break-all;
     background: #0d1117;
