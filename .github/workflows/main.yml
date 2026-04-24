@@ -19,19 +19,18 @@ jobs:
           for patch in *.patch; do
             [ -f "$patch" ] || continue
             echo "正在应用: $patch"
-            if ! git am "$patch"; then
-              echo "git am 失败，尝试 git apply"
-              git am --abort
+            if git apply --check "$patch" 2>/dev/null; then
+              echo "使用 git apply 应用"
               git apply "$patch"
+              git add -A
+              git commit -m "应用补丁: $patch"
+            elif git am "$patch" 2>/dev/null; then
+              echo "使用 git am 应用"
+            else
+              echo "错误: 无法应用 $patch"
+              exit 1
             fi
           done
 
-      - name: 提交并推送
-        run: |
-          git add .
-          if git diff --staged --quiet; then
-            echo "没有新的变更需要提交"
-          else
-            git commit -m "应用补丁文件"
-            git push
-          fi
+      - name: 推送
+        run: git push
