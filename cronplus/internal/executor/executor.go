@@ -55,7 +55,6 @@ var dangerousEnvVars = map[string]bool{
 	"KRB5_CONFIG":        true,
 	"KRB5CCNAME":         true,
 	"SYSTEMD_EDITOR":     true,
-	"EDITOR":             true,
 	"PAGER":              true,
 	"LESSOPEN":           true,
 	"LESSCLOSE":          true,
