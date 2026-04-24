@@ -145,7 +145,21 @@ type RunningInfo struct {
 // execute runs a single task as a subprocess. Called in a goroutine.
 func (p *Pool) execute(task model.Task, trigger string) {
 	taskID := task.ID
-	runID := NewRunID()
+
+	// Generate run ID based on trigger type
+	var runID string
+	if trigger == "manual" {
+		// Manual runs don't participate in sequential numbering
+		runID = NewManualRunID(taskID, task.RunUser)
+	} else {
+		// Auto runs: increment sequence, generate #taskID-user-NNNN
+		task.RunSeq++
+		runID = NewSeqRunID(taskID, task.RunUser, task.RunSeq)
+		// Persist updated RunSeq back to config
+		if err := p.store.UpdateTaskRunSeq(taskID, task.RunSeq); err != nil {
+			log.Printf("[%s] Pool: failed to update RunSeq for task [%d]: %v", runID, taskID, err)
+		}
+	}
 
 	// Concurrency check
 	p.mu.Lock()

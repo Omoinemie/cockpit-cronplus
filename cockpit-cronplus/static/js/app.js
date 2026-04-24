@@ -554,6 +554,14 @@
         }
     }
 
+    // Silent save without toast (for internal state updates like run_seq reset)
+    async function saveTasksQuiet() {
+        try {
+            var encoded = tasks.map(Utils.encodeTaskForSave);
+            await Utils.shellWriteJson(CONF_FILE, encoded);
+        } catch (e) { /* silent */ }
+    }
+
     async function loadLogs() {
         try {
             var raw = await cockpit.spawn(
@@ -578,6 +586,30 @@
             }
         });
         return { time: last, status: lastStatus };
+    }
+
+    // ===== Estimate interval from cron schedule (for end time calculation) =====
+    function _estimateIntervalMs(parsed) {
+        // parsed: {sec, min, hour, day, month, dow} — each a string
+        var sec = parsed.sec || '0';
+        var min = parsed.min || '*';
+        var hour = parsed.hour || '*';
+        var day = parsed.day || '*';
+        if (day !== '*' || hour !== '*') {
+            // Daily or hourly schedule
+            if (day !== '*') return 86400000; // ~1 day
+            if (hour !== '*') return 3600000;  // ~1 hour
+        }
+        // Try to extract interval from */N patterns
+        var minMatch = min.match(/^\*\/(\d+)$/);
+        if (minMatch) return parseInt(minMatch[1]) * 60000;
+        var secMatch = sec.match(/^\*\/(\d+)$/);
+        if (secMatch) return parseInt(secMatch[1]) * 1000;
+        // Fixed minute
+        if (min !== '*' && hour === '*') return 3600000; // every hour at this minute
+        if (min !== '*' && hour !== '*') return 86400000; // every day
+        // Default: every minute
+        return 60000;
     }
 
     // ===== Render Tasks =====
@@ -613,10 +645,11 @@
             var cmdDisplay = (task.command || '');
             var firstLine = cmdDisplay.split('\n')[0];
             var hasMultipleLines = cmdDisplay.indexOf('\n') >= 0;
-            if (firstLine.length > 70) firstLine = firstLine.slice(0, 67) + '...';
+            if (firstLine.length > 80) firstLine = firstLine.slice(0, 77) + '...';
             if (hasMultipleLines) firstLine += ' ' + I18n.t('task.multiLine');
             var lastRunInfo = getLastRunInfo(task.id);
             var lastRunShort = lastRunInfo.time ? TimeUtil.short(lastRunInfo.time) : null;
+            var lastRunFailed = lastRunInfo.status === 'error';
             var lastRunIcon = '';
             if (lastRunInfo.status === 'success') {
                 lastRunIcon = '<span class="last-run-icon success" title="' + I18n.t('log.filter.success') + '">' +
@@ -629,41 +662,77 @@
             }
 
             var nextRunStr = '';
+            var nextRunDate = null;
             if (task.enabled !== false && task.schedule && !task.schedule.startsWith('@')) {
                 var p = CronUtil.parseSchedule(task.schedule);
                 var next = CronUtil.getNextRunTime(p.sec, p.min, p.hour, p.day, p.month, p.dow);
-                if (next) nextRunStr = TimeUtil.full(next);
+                if (next) {
+                    nextRunDate = next;
+                    nextRunStr = TimeUtil.full(next);
+                }
             } else if (task.schedule && task.schedule.startsWith('@')) {
                 nextRunStr = task.schedule;
             }
 
-            var badges = '';
-            if (task.timeout > 0) badges += '<span class="badge badge-info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ' + task.timeout + 's</span>';
-            if (task.max_retries > 0) badges += '<span class="badge badge-info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> ' + task.max_retries + '</span>';
-            if (task.tags) badges += '<span class="badge badge-tags">' + Utils.escHtml(task.tags) + '</span>';
+            // Row 3: task params (badges)
+            var params = '';
+            if (task.schedule) params += '<span class="task-schedule">' + Utils.escHtml(task.schedule) + '</span>';
+            params += '<span class="task-user">' + Utils.escHtml(task.run_user || 'root') + '</span>';
+            if (task.cwd) params += '<span class="task-cwd" title="工作目录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ' + Utils.escHtml(task.cwd) + '</span>';
+            if (task.timeout > 0) params += '<span class="badge badge-info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ' + task.timeout + 's</span>';
+            if (task.max_retries > 0) params += '<span class="badge badge-info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> ' + task.max_retries + '</span>';
+            if (task.tags) params += '<span class="badge badge-tags">' + Utils.escHtml(task.tags) + '</span>';
+            if (task.comment) params += '<span class="task-comment">' + Utils.escHtml(task.comment) + '</span>';
+
+            // Row 4: time info + remaining runs
+            var timeRow = '';
+            // Last run
+            timeRow += '<span class="time-item"><span class="time-label" data-i18n="task.lastRun">' + I18n.t('task.lastRun') + '</span> ';
+            if (lastRunShort) {
+                timeRow += lastRunIcon + '<span class="time-last' + (lastRunFailed ? ' failed' : '') + '">' + Utils.escHtml(lastRunShort) + '</span>';
+            } else {
+                timeRow += '<span class="time-na" data-i18n="task.noRecord">' + I18n.t('task.noRecord') + '</span>';
+            }
+            timeRow += '</span>';
+            // Next run
+            timeRow += '<span class="time-item"><span class="time-label" data-i18n="task.nextRun">' + I18n.t('task.nextRun') + '</span> ';
+            if (nextRunStr) {
+                timeRow += '<span class="time-next">' + Utils.escHtml(nextRunStr) + '</span>';
+            } else {
+                timeRow += '<span class="time-na">-</span>';
+            }
+            timeRow += '</span>';
+            // Remaining runs & end time (if task has max_runs)
+            if (task.max_runs > 0) {
+                var remaining = Math.max(0, task.max_runs - (task.run_count || 0));
+                timeRow += '<span class="time-sep">|</span>';
+                timeRow += '<span class="time-item"><span class="time-remaining">' + remaining + '</span><span class="time-label"> / ' + task.max_runs + ' ' + I18n.t('task.remaining') + '</span></span>';
+                if (remaining > 0 && nextRunDate) {
+                    // Estimate end time: remaining runs * interval
+                    var p2 = CronUtil.parseSchedule(task.schedule);
+                    var intervalMs = _estimateIntervalMs(p2);
+                    if (intervalMs > 0) {
+                        var endDate = new Date(nextRunDate.getTime() + intervalMs * (remaining - 1));
+                        timeRow += '<span class="time-item"><span class="time-label">' + I18n.t('task.endTime') + '</span> <span class="time-end">' + Utils.escHtml(TimeUtil.full(endDate)) + '</span></span>';
+                    }
+                } else if (remaining === 0) {
+                    timeRow += '<span class="time-item"><span class="time-label">' + I18n.t('task.completed') + '</span></span>';
+                }
+            }
 
             return '<div class="task-card ' + (task.enabled === false ? 'disabled' : '') + '" data-index="' + idx + '">' +
                 '<label class="task-toggle">' +
                 '<input type="checkbox" ' + (task.enabled !== false ? 'checked' : '') + ' data-action="toggle" data-index="' + idx + '">' +
                 '<span class="toggle-slider"></span></label>' +
                 '<div class="task-info">' +
-                (task.title ? '<div class="task-title"><span class="task-id-badge">#' + task.id + '</span>' + Utils.escHtml(task.title) + '</div>' : '<div class="task-title"><span class="task-id-badge">#' + task.id + '</span></div>') +
+                // Row 1: ID + Title
+                '<div class="task-title"><span class="task-id-badge">#' + task.id + '</span>' + (task.title ? Utils.escHtml(task.title) : '') + '</div>' +
+                // Row 2: Command excerpt
                 '<div class="task-command" title="' + Utils.escHtml(task.command || '') + '">' + Utils.escHtml(firstLine) + '</div>' +
-                '<div class="task-meta">' +
-                '<span class="task-schedule">' + Utils.escHtml(task.schedule || '') + '</span>' +
-                '<span class="task-user">' + Utils.escHtml(task.run_user || 'root') + '</span>' +
-                (task.cwd ? '<span class="task-cwd" title="工作目录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ' + Utils.escHtml(task.cwd) + '</span>' : '') +
-                (task.comment ? '<span class="task-comment">' + Utils.escHtml(task.comment) + '</span>' : '') +
-                '</div>' +
-                (badges ? '<div class="task-badges">' + badges + '</div>' : '') +
-                '<div class="task-time-info">' +
-                '<span class="time-item"><span class="time-label" data-i18n="task.lastRun">' + I18n.t('task.lastRun') + '</span> ' +
-                (lastRunShort ? lastRunIcon + '<span class="time-last">' + Utils.escHtml(lastRunShort) + '</span>' : '<span class="time-na" data-i18n="task.noRecord">' + I18n.t('task.noRecord') + '</span>') +
-                '</span>' +
-                '<span class="time-item"><span class="time-label" data-i18n="task.nextRun">' + I18n.t('task.nextRun') + '</span> ' +
-                (nextRunStr ? '<span class="time-next">' + Utils.escHtml(nextRunStr) + '</span>' : '<span class="time-na">-</span>') +
-                '</span>' +
-                '</div>' +
+                // Row 3: Params
+                '<div class="task-params">' + params + '</div>' +
+                // Row 4: Time info
+                '<div class="task-time-info">' + timeRow + '</div>' +
                 '</div>' +
                 '<div class="task-actions">' +
                 '<button class="btn btn-sm btn-secondary" data-action="run" data-index="' + idx + '" data-i18n-title="btn.run">' +
@@ -1006,7 +1075,7 @@
     function writeRunLog(task, command, status, output, durationMs, exitCode) {
         var logFile = '/opt/cronplus/logs/task_' + task.id + '.json';
         var entry = {
-            run_id: currentRunID || generateRunID(),
+            run_id: currentRunID || generateRunID(task),
             task_id: task.id,
             title: task.title || '',
             command: command,
@@ -1057,7 +1126,13 @@
     }
 
     function toggleTask(index) {
-        tasks[index].enabled = !tasks[index].enabled;
+        var wasEnabled = tasks[index].enabled !== false;
+        tasks[index].enabled = !wasEnabled;
+        // Reset run_seq when re-enabling a task (关闭后再打开，序号重置)
+        if (!wasEnabled && tasks[index].enabled) {
+            tasks[index].run_seq = 0;
+            tasks[index].run_count = 0;
+        }
         saveTasks();
         renderTasks();
     }
@@ -1095,7 +1170,7 @@
         $('#inputMaxConcurrent').value = task.max_concurrent || 1;
         $('#inputKillPrevious').checked = !!task.kill_previous;
         $('#inputMaxRuns').value = task.max_runs || 0;
-        $('#inputRunCount').value = task.run_count || 0;
+        $('#inputRunCount').value = task.run_seq || task.run_count || 0;
         $('#inputTags').value = task.tags || '';
         $('#inputLogDays').value = task.log_retention_days || 0;
         $('#inputLogMax').value = task.log_max_entries || 0;
@@ -1152,6 +1227,7 @@
         $('#inputKillPrevious').checked = false;
         $('#inputMaxRuns').value = 0;
         $('#inputRunCount').value = 0;
+        $('#inputRunCount').setAttribute('data-run-seq', '0');
         $('#inputTags').value = '';
         $('#inputLogDays').value = 0; $('#inputLogMax').value = 0;
         $('#inputRebootDelay').value = 0;
@@ -1203,6 +1279,7 @@
             kill_previous: $('#inputKillPrevious').checked,
             max_runs: parseInt($('#inputMaxRuns').value) || 0,
             run_count: parseInt($('#inputRunCount').value) || 0,
+            run_seq: parseInt($('#inputRunCount').value) || 0,
             tags: $('#inputTags').value.trim(),
             log_retention_days: parseInt($('#inputLogDays').value) || 0,
             log_max_entries: parseInt($('#inputLogMax').value) || 0,
@@ -1362,7 +1439,14 @@
     // ===== UI Helpers =====
     function showModal(show) { $('#taskModal').style.display = show ? 'flex' : 'none'; }
 
-    function generateRunID() {
+    function generateRunID(task) {
+        // Manual run: #taskID-user-manual-xxxx
+        if (task) {
+            var user = task.run_user || 'root';
+            var hex = Math.floor(Math.random() * 0xFFFF).toString(16).padStart(4, '0');
+            return '#' + task.id + '-' + user + '-manual-' + hex;
+        }
+        // Fallback
         var now = new Date();
         var pad = function (n, w) { var s = String(n); while (s.length < w) s = '0' + s; return s; };
         var ts = pad(now.getFullYear() % 100, 2) + pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2) +
@@ -1378,7 +1462,8 @@
         var btn = $('#btnRunStopOutput');
         var copyBtn = $('#btnCopyOutput');
         var taskNameEl = $('#outputTaskName');
-        currentRunID = generateRunID();
+        var task = pendingRunTask;
+        currentRunID = generateRunID(task);
         outputEl.textContent = '$ ' + command + '\n';
         statusEl.className = 'terminal-status';
         statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span class="trigger-badge-manual">[manual]</span> <span>' + (user || 'root') + '</span>';

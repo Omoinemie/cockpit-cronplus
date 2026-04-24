@@ -140,7 +140,7 @@ func DecodeCommand(cmd string) string {
 }
 
 // NewRunID generates a short human-readable run identifier.
-// Format: YYMMDD-HHMMSS-xxxx (4 random hex chars)
+// Format: YYMMDD-HHMMSS-xxxx (4 random hex chars) — used as fallback only.
 func NewRunID() string {
 	now := time.Now()
 	b := make([]byte, 2)
@@ -149,4 +149,18 @@ func NewRunID() string {
 		now.Format("060102-150405"),
 		fmt.Sprintf("%02x%02x", b[0], b[1]),
 	)
+}
+
+// NewSeqRunID generates a sequential run identifier.
+// Format: #taskID-user-NNNN (e.g. #1-root-0001)
+func NewSeqRunID(taskID int, user string, seq int) string {
+	return fmt.Sprintf("#%d-%s-%04d", taskID, user, seq)
+}
+
+// NewManualRunID generates a manual run identifier.
+// Format: #taskID-user-manual-xxxx (4 random hex chars)
+func NewManualRunID(taskID int, user string) string {
+	b := make([]byte, 2)
+	rand.Read(b)
+	return fmt.Sprintf("#%d-%s-manual-%02x%02x", taskID, user, b[0], b[1])
 }

@@ -314,15 +314,19 @@ body {
 }
 .task-cwd svg { vertical-align: -1px; }
 
-/* Task time info */
+/* Task time info (row 4) */
 .task-time-info {
-    display: flex; gap: 14px; margin-top: 4px; font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);
+    display: flex; gap: 14px; margin-top: 4px; font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); flex-wrap: wrap; align-items: center;
 }
 .task-time-info .time-item { display: flex; align-items: center; gap: 4px; }
 .task-time-info .time-label { color: var(--text-muted); }
 .task-time-info .time-last { color: var(--success); }
+.task-time-info .time-last.failed { color: var(--error); }
 .task-time-info .time-next { color: var(--warning); }
 .task-time-info .time-na { color: var(--text-muted); font-style: italic; }
+.task-time-info .time-end { color: var(--text-secondary); }
+.task-time-info .time-remaining { color: var(--accent); font-weight: 600; }
+.task-time-info .time-sep { color: var(--border); margin: 0 2px; }
 
 /* Last run status icon */
 .last-run-icon {
@@ -331,6 +335,11 @@ body {
 .last-run-icon svg { width: 14px; height: 14px; }
 .last-run-icon.success { color: var(--success); }
 .last-run-icon.error { color: var(--error); }
+
+/* Task params row (row 3) - same as task-meta */
+.task-params, .task-meta {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; margin-top: 4px;
+}
 
 .task-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
@@ -555,7 +564,7 @@ body {
 .form-group input[type="checkbox"] { margin-right: 8px; accent-color: var(--accent); }
 
 /* ===== Schedule Presets ===== */
-.schedule-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.schedule-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; justify-content: center; }
 .preset-btn {
     padding: 6px 14px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 20px;
     color: var(--text-secondary); font-size: 12px; font-family: var(--font); cursor: pointer; transition: all var(--transition);
@@ -568,8 +577,9 @@ body {
 .cron-actions { display: flex; justify-content: flex-end; margin-bottom: 16px; }
 .cron-actions .btn { font-size: 12px; padding: 4px 10px; opacity: 0.7; }
 .cron-actions .btn:hover { opacity: 1; }
-.preset-btn-reset { opacity: 0.5 !important; border-style: dashed !important; min-width: auto !important; padding: 6px 10px !important; }
-.preset-btn-reset:hover { opacity: 1 !important; }
+.preset-btn-reset { opacity: 0.7 !important; border-style: dashed !important; min-width: auto !important; padding: 6px 10px !important; border-color: var(--warning) !important; color: var(--warning) !important; }
+.preset-btn-reset:hover { opacity: 1 !important; background: rgba(251,191,36,0.1) !important; border-color: var(--warning) !important; }
+.cron-fields-wrapper { text-align: center; }
 .output-task-name { font-size: 13px; font-weight: 400; color: var(--text-secondary); margin-left: 8px; }
 .cron-field { text-align: center; }
 .cron-field label { display: block; font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }

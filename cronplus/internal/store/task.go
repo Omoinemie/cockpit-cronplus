@@ -111,6 +111,30 @@ func (s *Store) DeleteTask(id int) error {
 	return writeJSON(s.ConfPath, filtered)
 }
 
+// UpdateTaskRunSeq updates just the run_seq field of a task (atomic partial update).
+func (s *Store) UpdateTaskRunSeq(id int, seq int) error {
+	s.taskMu.Lock()
+	defer s.taskMu.Unlock()
+
+	var tasks []model.Task
+	if _, err := ReadJSON(s.ConfPath, &tasks); err != nil {
+		return err
+	}
+	for i := range tasks {
+		if tasks[i].ID == id {
+			tasks[i].RunSeq = seq
+			tasks[i].RunCount = seq
+			return writeJSON(s.ConfPath, tasks)
+		}
+	}
+	return fmt.Errorf("task %d not found", id)
+}
+
+// ResetTaskRunSeq resets the run_seq of a task to 0 (called on manual run).
+func (s *Store) ResetTaskRunSeq(id int) error {
+	return s.UpdateTaskRunSeq(id, 0)
+}
+
 // ToggleTask flips the enabled state of a task.
 func (s *Store) ToggleTask(id int) (*model.Task, error) {
 	s.taskMu.Lock()

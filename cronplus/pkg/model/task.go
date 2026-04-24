@@ -20,6 +20,9 @@ type Task struct {
 	LogRetention  int               `json:"log_retention_days"`
 	LogMaxEntries int               `json:"log_max_entries"`
 	RebootDelay   int               `json:"reboot_delay"`
+	RunSeq        int               `json:"run_seq"`         // current auto-run sequence number, resets on restart/manual
+	MaxRuns       int               `json:"max_runs"`        // max auto-run count, 0=unlimited
+	RunCount      int               `json:"run_count"`       // total auto-run count (read-only, from seq)
 }
 
 // Defaults fills unset fields with default values.
