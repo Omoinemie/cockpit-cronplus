@@ -16,7 +16,7 @@ import (
 	"cronplus/pkg/model"
 )
 
-var version = "2.0.7"
+var version = "dev" // overwritten by -ldflags at build time
 
 func main() {
 	confPath := flag.String("conf", store.DefaultConfFile, "Config file path")
@@ -104,7 +104,7 @@ func setupLogging(debug bool, confPath string) {
 	}
 
 	logPath := filepath.Join(store.DefaultLogDir, "cronplus.log")
-	os.MkdirAll(filepath.Dir(logPath), 0755)
+	os.MkdirAll(filepath.Dir(logPath), 0700)
 
 	// Rotate if needed
 	rotateLog(logPath, maxBytes, backupCount)

@@ -18,7 +18,8 @@ echo "==> Target Architecture: ${ARCH}"
 # 同步更新源码中的 manifest.json，保持构建一致性
 MANIFEST_PATH="$DIR/cockpit-cronplus/manifest.json"
 if [ -f "$MANIFEST_PATH" ]; then
-    sed -i "s/\"plugin_version\": \"[^\"]*\"/\"plugin_version\": \"${VERSION}\"/" "$MANIFEST_PATH"
+    # Use delimiter # instead of / to avoid path conflicts
+    sed -i "s#\"plugin_version\": \"[^\"]*\"#\"plugin_version\": \"${VERSION}\"#" "$MANIFEST_PATH"
 fi
 
 echo "==> Building cronplus v${VERSION} for ${ARCH}"
@@ -45,12 +46,18 @@ cp "$SRC/bin/cronplus"  "$PKG/usr/bin/"
 chmod 755 "$PKG/usr/bin/cronplusd" "$PKG/usr/bin/cronplus"
 cp "$SRC/cronplus.service" "$PKG/lib/systemd/system/"
 
+# Set secure permissions for data directory
+chmod 700 "$PKG/opt/cronplus"
+chmod 700 "$PKG/opt/cronplus/logs"
+
 # 注入维护者脚本
 cat > "$PKG/DEBIAN/postinst" <<'EOF'
 #!/bin/bash
 set -e
 mkdir -p /opt/cronplus/logs
-chmod 755 /opt/cronplus /opt/cronplus/logs
+# Restrict permissions: only root can read config/task data
+chmod 700 /opt/cronplus
+chmod 700 /opt/cronplus/logs
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
     systemctl enable cronplus.service

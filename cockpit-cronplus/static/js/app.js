@@ -360,7 +360,7 @@
         if (!viewer) return;
         try {
             var raw = await cockpit.spawn(
-                ['bash', '-c', 'cat ' + DAEMON_LOG_FILE + ' 2>/dev/null | tail -2000'],
+                ['bash', '-c', 'cat ' + Utils.shellQuote(DAEMON_LOG_FILE) + ' 2>/dev/null | tail -2000'],
                 { err: 'message', environ: ['LC_ALL=C'] }
             );
             var lines = (raw || '').split('\n').filter(function (l) { return l.trim(); });
@@ -1020,26 +1020,19 @@
             created_at: new Date().toISOString().replace('T', ' ').slice(0, 19)
         };
         var entryJson = JSON.stringify(entry);
-        // Append to task log JSON array using python3 (available on most systems)
+        var safeLogFile = Utils.shellQuote(logFile);
+        // Use jq for safe JSON append (fallback: python3, then node)
         var script =
-            'LOG=' + logFile + ' && mkdir -p "$(dirname "$LOG")" && ' +
-            'python3 -c "' +
-            "import json,os,sys;" +
-            "p=sys.argv[1];" +
-            "e=json.loads(sys.argv[2]);" +
-            "d=[];" +
-            "try:" +
-            "  f=open(p);" +
-            "  d=json.load(f);" +
-            "  f.close();" +
-            "except:pass;" +
-            "if not isinstance(d,list):d=[];" +
-            "d.append(e);" +
-            "d=d[-1000:];" +
-            "f=open(p,'w');" +
-            "json.dump(d,f,indent=2);" +
-            "f.close();" +
-            '" "$LOG" ' + Utils.shellQuote(entryJson);
+            'LOG=' + safeLogFile + ' && mkdir -p "$(dirname "$LOG")" && ' +
+            'if command -v jq >/dev/null 2>&1; then ' +
+            '  if [ -f "$LOG" ]; then ' +
+            '    jq --argjson e ' + Utils.shellQuote(entryJson) + ' ". + [$e] | .[-1000:]" "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; ' +
+            '  else ' +
+            '    echo "[" > "$LOG" && echo ' + Utils.shellQuote(entryJson) + ' >> "$LOG" && echo "]" >> "$LOG"; ' +
+            '  fi; ' +
+            'elif command -v python3 >/dev/null 2>&1; then ' +
+            '  python3 -c ' + Utils.shellQuote("import json,sys;p=sys.argv[1];e=json.loads(sys.argv[2]);d=[]\ntry:\n  f=open(p);d=json.load(f);f.close()\nexcept:pass\nif not isinstance(d,list):d=[]\nd.append(e);d=d[-1000:]\nf=open(p,'w');json.dump(d,f,indent=2);f.close()") + ' "$LOG" ' + Utils.shellQuote(entryJson) + '; ' +
+            'fi';
         cockpit.spawn(
             ['bash', '-c', script],
             { err: 'ignore', environ: ['LC_ALL=C'] }
@@ -1320,7 +1313,7 @@
     // ===== Raw Editor =====
     async function loadRawEditor() {
         try {
-            var out = await Utils.spawn('bash', ['-c', 'cat ' + CONF_FILE + ' 2>/dev/null || echo "[]"']);
+            var out = await Utils.spawn('bash', ['-c', 'cat ' + Utils.shellQuote(CONF_FILE) + ' 2>/dev/null || echo "[]"']);
             $('#rawEditor').value = out;
             $('#rawStatus').textContent = '';
         } catch (e) { $('#rawEditor').value = ''; }
@@ -1330,7 +1323,7 @@
         var content = $('#rawEditor').value;
         try {
             JSON.parse(content);
-            await Utils.spawn('bash', ['-c', 'printf %s ' + Utils.shellQuote(content) + ' | tee ' + CONF_FILE + ' > /dev/null']);
+            await Utils.spawn('bash', ['-c', 'printf %s ' + Utils.shellQuote(content) + ' | tee ' + Utils.shellQuote(CONF_FILE) + ' > /dev/null']);
             // Signal daemon to reload config (SIGHUP = hot reload, no restart)
             try {
                 await cockpit.spawn(
@@ -1671,7 +1664,7 @@
         $('#btnDaemonClearFile').addEventListener('click', function () {
             if (!confirm(I18n.t('daemon.clearLogConfirm'))) return;
             cockpit.spawn(
-                ['bash', '-c', '> /opt/cronplus/logs/cronplus.log && echo cleared'],
+                ['bash', '-c', '> ' + Utils.shellQuote(DAEMON_LOG_FILE) + ' && echo cleared'],
                 { err: 'message', environ: ['LC_ALL=C'] }
             ).then(function () {
                 daemonLogLines = [];

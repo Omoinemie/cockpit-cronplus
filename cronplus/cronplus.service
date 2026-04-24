@@ -1,6 +1,6 @@
 [Unit]
 Description=cronplus - Advanced Cron Task Manager
-After=network.target
+After=network.target local-fs.target
 
 [Service]
 Type=simple
@@ -10,13 +10,22 @@ Restart=on-failure
 RestartSec=5
 User=root
 
-NoNewPrivileges=no
+# ── Security Hardening ──
+NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/opt/cronplus /run
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
+ProtectHome=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RemoveIPC=yes
+MemoryDenyWriteExecute=yes
 
 [Install]
 WantedBy=multi-user.target

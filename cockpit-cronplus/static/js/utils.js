@@ -26,8 +26,9 @@ var Utils = (function () {
     }
 
     function shellReadJson(path) {
+        var safePath = shellQuote(path);
         return cockpit.spawn(
-            ['bash', '-c', 'cat ' + path + ' 2>/dev/null || echo "[]"'],
+            ['bash', '-c', 'cat ' + safePath + ' 2>/dev/null || echo "[]"'],
             { err: 'message', environ: ['LC_ALL=C'] }
         ).then(function (out) {
             try { return JSON.parse(out || '[]'); }
@@ -37,7 +38,9 @@ var Utils = (function () {
 
     function shellWriteJson(path, data) {
         var json = JSON.stringify(data, null, 2);
-        var script = 'mkdir -p $(dirname ' + path + ') && printf %s ' + shellQuote(json) + ' | tee ' + path + ' > /dev/null';
+        var safePath = shellQuote(path);
+        var safeDir = shellQuote(path.replace(/\/[^\/]*$/, ''));
+        var script = 'mkdir -p ' + safeDir + ' && printf %s ' + shellQuote(json) + ' | tee ' + safePath + ' > /dev/null';
         return cockpit.spawn(['bash', '-c', script], { err: 'message', environ: ['LC_ALL=C'] });
     }
 

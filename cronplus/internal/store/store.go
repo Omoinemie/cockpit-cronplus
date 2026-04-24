@@ -40,14 +40,15 @@ func New(confPath, logDir string) *Store {
 		SettingsPath: filepath.Join(filepath.Dir(confPath), "settings.json"),
 		StatePath:    filepath.Join(filepath.Dir(confPath), "state.json"),
 	}
-	os.MkdirAll(logDir, 0755)
+	os.MkdirAll(logDir, 0700)
 	return s
 }
 
 // atomicWrite writes content to path atomically via temp+rename.
+// Uses restrictive permissions (0600) to prevent other users from reading config.
 func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".tmp_*")
@@ -55,12 +56,27 @@ func atomicWrite(path string, data []byte) error {
 		return err
 	}
 	tmpPath := tmp.Name()
+	// Set restrictive permissions before writing sensitive data
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err
 	}
-	tmp.Close()
+	// Sync to ensure data is flushed before rename
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return err

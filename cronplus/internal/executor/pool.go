@@ -364,9 +364,14 @@ func (p *Pool) runOnce(ctx context.Context, task model.Task, command string, att
 }
 
 // buildEnv constructs the environment slice from task env vars.
+// Applies env var sanitization to prevent privilege escalation.
 func buildEnv(envVars map[string]string) []string {
+	safe, rejected := SanitizeEnvVars(envVars)
+	if len(rejected) > 0 {
+		log.Printf("[security] Blocked dangerous env vars: %v", rejected)
+	}
 	env := []string{}
-	for k, v := range envVars {
+	for k, v := range safe {
 		env = append(env, k+"="+v)
 	}
 	return env

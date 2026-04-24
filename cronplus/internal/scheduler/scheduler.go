@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,16 +22,20 @@ type Pool interface {
 
 // Scheduler manages the main scheduling loop.
 type Scheduler struct {
-	store         *store.Store
-	pool          Pool
-	running       atomic.Bool
-	taskLastRun   map[int]time.Time
-	lastMtime     int64
-	cachedTasks   []model.Task
-	rebootFired   bool
-	stats         Stats
+	store       *store.Store
+	pool        Pool
+	running     atomic.Bool
+	lastRunMu   sync.Mutex           // protects taskLastRun
+	taskLastRun map[int]time.Time
+	lastMtime   int64
+	cachedTasks []model.Task
+	rebootFired bool
+	stats       Stats
 	lastNextTaskID int    // track last logged "Next:" task to avoid spam
 	lastNextTime  string // track last logged "Next:" time
+
+	// Track @reboot goroutines for graceful shutdown
+	rebootCancel context.CancelFunc
 }
 
 // Stats holds scheduler statistics.
@@ -63,6 +68,10 @@ func (s *Scheduler) Start(ctx context.Context) {
 // Stop signals the scheduler to stop.
 func (s *Scheduler) Stop() {
 	s.running.Store(false)
+	// Cancel any pending @reboot goroutines
+	if s.rebootCancel != nil {
+		s.rebootCancel()
+	}
 	log.Println("Scheduler stopped")
 }
 
@@ -70,7 +79,9 @@ func (s *Scheduler) Stop() {
 func (s *Scheduler) Wakeup() {
 	s.lastMtime = 0
 	s.cachedTasks = nil
+	s.lastRunMu.Lock()
 	s.taskLastRun = make(map[int]time.Time)
+	s.lastRunMu.Unlock()
 	s.lastNextTaskID = 0
 	s.lastNextTime = ""
 	log.Println("Scheduler: cache cleared, will re-read config")
@@ -124,13 +135,28 @@ func (s *Scheduler) loop(ctx context.Context) {
 			if task.Schedule == "@reboot" {
 				if !s.rebootFired {
 					s.rebootFired = true
+					// Create a cancellable context for @reboot goroutines
+					rebootCtx, rebootCancel := context.WithCancel(ctx)
+					s.rebootCancel = rebootCancel
+
 					if task.RebootDelay > 0 {
 						log.Printf("Task [%d] @reboot: scheduled in %ds", task.ID, task.RebootDelay)
 						go func(t model.Task) {
-							time.Sleep(time.Duration(t.RebootDelay) * time.Second)
+							select {
+							case <-time.After(time.Duration(t.RebootDelay) * time.Second):
+								// Proceed with dispatch
+							case <-rebootCtx.Done():
+								log.Printf("Task [%d] @reboot: cancelled during delay", t.ID)
+								return
+							}
+							if !s.running.Load() {
+								return
+							}
 							s.pool.Dispatch(t, "auto")
+							s.lastRunMu.Lock()
 							s.stats.TasksExecuted++
 							s.stats.LastRun = time.Now().Format(time.RFC3339)
+							s.lastRunMu.Unlock()
 						}(task)
 					} else {
 						log.Printf("Task [%d] @reboot: firing now", task.ID)
@@ -156,7 +182,9 @@ func (s *Scheduler) loop(ctx context.Context) {
 				continue
 			}
 
+			s.lastRunMu.Lock()
 			lastRun := s.taskLastRun[task.ID]
+			s.lastRunMu.Unlock()
 			if lastRun.IsZero() {
 				lastRun = now.Add(-time.Second)
 			}
@@ -187,7 +215,10 @@ func (s *Scheduler) loop(ctx context.Context) {
 				break
 			}
 			taskID := c.task.ID
+
+			s.lastRunMu.Lock()
 			s.taskLastRun[taskID] = c.at
+			s.lastRunMu.Unlock()
 
 			if s.pool.IsRunning(taskID) {
 				if c.task.KillPrevious {
@@ -209,8 +240,10 @@ func (s *Scheduler) loop(ctx context.Context) {
 				}())
 
 			s.pool.Dispatch(c.task, "auto")
+			s.lastRunMu.Lock()
 			s.stats.TasksExecuted++
 			s.stats.LastRun = time.Now().Format(time.RFC3339)
+			s.lastRunMu.Unlock()
 			s.lastNextTaskID = 0 // reset so next task gets logged
 			s.lastNextTime = ""
 			executed = true

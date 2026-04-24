@@ -17,7 +17,7 @@ import (
 	"cronplus/pkg/model"
 )
 
-var version = "2.0.7"
+var version = "dev" // overwritten by -ldflags at build time
 const serviceName = "cronplus.service"
 
 func main() {
@@ -367,8 +367,12 @@ func writeRunLog(runID string, s *store.Store, task *model.Task, command, status
 }
 
 func buildEnv(envVars map[string]string) []string {
+	safe, rejected := executor.SanitizeEnvVars(envVars)
+	if len(rejected) > 0 {
+		fmt.Fprintf(os.Stderr, "[security] Blocked dangerous env vars: %v\n", rejected)
+	}
 	env := os.Environ()
-	for k, v := range envVars {
+	for k, v := range safe {
 		env = append(env, k+"="+v)
 	}
 	return env
@@ -491,24 +495,75 @@ func cmdImport(args []string) int {
 		fmt.Fprintln(os.Stderr, "Usage: cronplus import <file>")
 		return 1
 	}
+
+	// Validate file path — must be a regular file, not symlink/dev/proc
+	fi, err := os.Lstat(args[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		return 1
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		fmt.Fprintln(os.Stderr, "Error: symlinks are not allowed for import")
+		return 1
+	}
+	if !fi.Mode().IsRegular() {
+		fmt.Fprintln(os.Stderr, "Error: import target must be a regular file")
+		return 1
+	}
+
+	// Limit import file size to 10MB
+	const maxImportSize = 10 * 1024 * 1024
+	if fi.Size() > maxImportSize {
+		fmt.Fprintf(os.Stderr, "Error: import file too large (%d bytes, max %d)\n", fi.Size(), maxImportSize)
+		return 1
+	}
+
 	data, err := os.ReadFile(args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 		return 1
 	}
 	var wrapper struct {
-		Tasks []model.Task `json:"tasks"`
+		Version    string       `json:"version"`
+		Source     string       `json:"source"`
+		ExportTime string       `json:"exportTime"`
+		Tasks      []model.Task `json:"tasks"`
 	}
 	if err := json.Unmarshal(data, &wrapper); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing JSON: %v\n", err)
 		return 1
 	}
 
+	// Validate source field if present
+	if wrapper.Source != "" && wrapper.Source != "cronplus" {
+		fmt.Fprintf(os.Stderr, "Warning: import source is %q, expected 'cronplus'\n", wrapper.Source)
+	}
+
 	s := defaultStore()
 	count := 0
+	skipped := 0
 	for _, t := range wrapper.Tasks {
 		if t.Command == "" {
+			skipped++
 			continue
+		}
+		// Validate schedule
+		if t.Schedule != "" && t.Schedule != "@reboot" {
+			parts := strings.Fields(t.Schedule)
+			if len(parts) != 5 && len(parts) != 6 {
+				fmt.Fprintf(os.Stderr, "Warning: task %q has invalid schedule %q, skipping\n", t.Title, t.Schedule)
+				skipped++
+				continue
+			}
+		}
+		// Validate run_user
+		if t.RunUser != "" {
+			safeUser := strings.TrimSpace(t.RunUser)
+			if safeUser == "" || strings.ContainsAny(safeUser, " \t\n\r;'\"`|&$(){}[]") {
+				fmt.Fprintf(os.Stderr, "Warning: task %q has suspicious run_user %q, skipping\n", t.Title, t.RunUser)
+				skipped++
+				continue
+			}
 		}
 		t.ID = 0 // auto-assign
 		if err := s.CreateTask(&t); err != nil {
@@ -517,7 +572,11 @@ func cmdImport(args []string) int {
 		}
 		count++
 	}
-	fmt.Printf("Imported %d tasks\n", count)
+	fmt.Printf("Imported %d tasks", count)
+	if skipped > 0 {
+		fmt.Printf(" (%d skipped)", skipped)
+	}
+	fmt.Println()
 
 	// Signal daemon to reload
 	if pid := daemonPID(); pid > 0 {
