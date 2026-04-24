@@ -78,6 +78,9 @@
   "form.enabled": "Включить эту задачу",
   "form.rebootDelay": "Задержка запуска (секунды)",
   "form.rebootDelayHint": "Задержка после загрузки системы. 0 = немедленно",
+  "form.cronBaseTime": "Base Date/Time",
+  "form.cronBaseTimeHint": "Reference time for calculating every N intervals",
+
   "form.customUser": "Произвольный…",
   "form.customUserPlaceholder": "Введите имя пользователя",
   "cron.sec": "Сек",

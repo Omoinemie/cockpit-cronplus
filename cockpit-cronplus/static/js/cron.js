@@ -282,12 +282,134 @@ var CronUtil = (function () {
         return runs[0] || null;
     }
 
+    // Detect "*/N" step pattern and return the step value (or 0 if not a step pattern)
+    function _getStep(spec) {
+        if (!spec || spec === '*') return 0;
+        var m = spec.match(/^\*\/(\d+)$/);
+        if (m) return parseInt(m[1]);
+        return 0;
+    }
+
+    /**
+     * Calculate next run times using a custom base datetime for "every N" intervals.
+     * For fields with step (slash) pattern, the interval is calculated from baseTime instead of epoch.
+     * Other fields (fixed values, ranges, etc.) are respected as-is.
+     *
+     * @param {string} sec - seconds field
+     * @param {string} min - minutes field
+     * @param {string} hour - hours field
+     * @param {string} day - days field
+     * @param {string} month - months field
+     * @param {string} dow - day-of-week field
+     * @param {Date} baseTime - reference datetime for interval calculation
+     * @param {number} count - number of results to return (default 5)
+     * @returns {Date[]} array of next run times
+     */
+    function getNextRunTimesFromBase(sec, min, hour, day, month, dow, baseTime, count) {
+        count = count || 5;
+        var fields = [sec || '0', min || '*', hour || '*', day || '*', month || '*', dow || '*'];
+        var now = new Date();
+
+        // Detect which fields have step patterns
+        var secStep = _getStep(sec);
+        var minStep = _getStep(min);
+        var hourStep = _getStep(hour);
+        var dayStep = _getStep(day);
+
+        // Determine the primary interval field (largest time unit with a step)
+        // Priority: day > hour > minute > second
+        var intervalMs = 0;
+        var anchorField = '';
+        if (dayStep > 0) {
+            intervalMs = dayStep * 86400000;
+            anchorField = 'day';
+        } else if (hourStep > 0) {
+            intervalMs = hourStep * 3600000;
+            anchorField = 'hour';
+        } else if (minStep > 0) {
+            intervalMs = minStep * 60000;
+            anchorField = 'min';
+        } else if (secStep > 0) {
+            intervalMs = secStep * 1000;
+            anchorField = 'sec';
+        }
+
+        // If no step pattern found, fall back to standard calculation
+        if (intervalMs === 0) {
+            return getNextRunTimes(sec, min, hour, day, month, dow);
+        }
+
+        var base = baseTime instanceof Date ? baseTime : new Date(baseTime);
+        if (isNaN(base.getTime())) {
+            return getNextRunTimes(sec, min, hour, day, month, dow);
+        }
+
+        // Calculate how many intervals have elapsed from base to now
+        var elapsed = now.getTime() - base.getTime();
+        var intervalsPassed = Math.floor(elapsed / intervalMs);
+
+        // Start from the next interval after now
+        var startTime = base.getTime() + (intervalsPassed + 1) * intervalMs;
+
+        // If base is in the future, start from base itself
+        if (base.getTime() > now.getTime()) {
+            startTime = base.getTime();
+        }
+
+        var results = [];
+        for (var i = 0; i < count; i++) {
+            var t = new Date(startTime + i * intervalMs);
+
+            // For day intervals, we need to respect the time-of-day from base
+            if (anchorField === 'day') {
+                t = new Date(startTime + i * intervalMs);
+            }
+
+            // Verify this time matches all non-step fields using standard cron matching
+            // For step fields, we trust our interval calculation
+            if (matchCron6(t, sec, min, hour, day, month, dow)) {
+                results.push(t);
+            } else {
+                // If it doesn't match (e.g., dow constraint), use nextRunTimeAfter to find the next valid time
+                var prev = i === 0 ? new Date(startTime - 1000) : results[results.length - 1];
+                var fallback = nextRunTimeAfter(fields, prev);
+                if (fallback && results.length < count) {
+                    // Avoid duplicates
+                    if (!results.length || fallback.getTime() !== results[results.length - 1].getTime()) {
+                        results.push(fallback);
+                    }
+                }
+                // Recalculate next from this point
+                for (var j = results.length; j < count; j++) {
+                    var nxt = nextRunTimeAfter(fields, results[results.length - 1]);
+                    if (!nxt) break;
+                    results.push(nxt);
+                }
+                break;
+            }
+        }
+
+        // If we didn't get enough results from interval calculation, fill with standard method
+        if (results.length < count) {
+            var lastRef = results.length > 0 ? results[results.length - 1] : now;
+            for (var k = results.length; k < count; k++) {
+                var nxt2 = nextRunTimeAfter(fields, lastRef);
+                if (!nxt2) break;
+                results.push(nxt2);
+                lastRef = nxt2;
+            }
+        }
+
+        return results.slice(0, count);
+    }
+
     return {
         parseSchedule: parseSchedule,
         describeSpecial: describeSpecial,
         describeCron: describeCron,
         updatePreview: updatePreview,
         getNextRunTimes: getNextRunTimes,
-        getNextRunTime: getNextRunTime
+        getNextRunTime: getNextRunTime,
+        getNextRunTimesFromBase: getNextRunTimesFromBase
     };
 })();

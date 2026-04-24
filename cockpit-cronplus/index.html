@@ -352,6 +352,11 @@
                         <input type="number" id="inputRebootDelay" value="0" min="0" max="86400" placeholder="0">
                         <span class="field-hint" data-i18n="form.rebootDelayHint">系统启动后延迟多少秒执行，0 = 立即执行</span>
                     </div>
+                    <div id="cronBaseTimeGroup" class="cron-base-time-group">
+                        <label data-i18n="form.cronBaseTime">基准日期时间</label>
+                        <input type="datetime-local" id="inputCronBaseTime" step="1">
+                        <span class="field-hint" data-i18n="form.cronBaseTimeHint">用于计算"每N"间隔的起始参考时间，如每2天、每2小时。默认为当前时间</span>
+                    </div>
                 </div>
 
                 <div class="cron-fields">
@@ -448,11 +453,6 @@
                             </label>
                             <span class="field-hint" data-i18n="form.killPreviousHint">当达到并发上限时，自动终止已有的运行实例并启动新的（适合避免任务堆积）</span>
                         </div>
-                        <div class="form-group">
-                            <label data-i18n="form.tags">标签 (逗号分隔)</label>
-                            <input type="text" id="inputTags" data-i18n-placeholder="form.tagsPlaceholder" placeholder="backup,daily" autocomplete="off">
-                            <span class="field-hint" data-i18n="form.tagsHint">用于分类和筛选任务，例如: backup, cleanup, monitor</span>
-                        </div>
                     </div>
                 </details>
 
@@ -472,6 +472,12 @@
                 <div class="form-group">
                     <label data-i18n="form.comment">备注</label>
                     <input type="text" id="inputComment" data-i18n-placeholder="form.commentPlaceholder" placeholder="任务说明（可选）" autocomplete="off">
+                </div>
+
+                <div class="form-group">
+                    <label data-i18n="form.tags">标签 (逗号分隔)</label>
+                    <input type="text" id="inputTags" data-i18n-placeholder="form.tagsPlaceholder" placeholder="backup,daily" autocomplete="off">
+                    <span class="field-hint" data-i18n="form.tagsHint">用于分类和筛选任务，例如: backup, cleanup, monitor</span>
                 </div>
 
                 <div class="form-group">

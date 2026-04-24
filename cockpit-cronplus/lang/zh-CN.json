@@ -78,6 +78,8 @@
   "form.enabled": "启用此任务",
   "form.rebootDelay": "启动延迟 (秒)",
   "form.rebootDelayHint": "系统启动后延迟多少秒执行，0 = 立即执行",
+  "form.cronBaseTime": "基准日期时间",
+  "form.cronBaseTimeHint": "用于计算\"每N\"间隔的起始参考时间，如每2天、每2小时。默认为当前时间",
   "form.customUser": "自定义…",
   "form.customUserPlaceholder": "输入用户名",
   "cron.sec": "秒",

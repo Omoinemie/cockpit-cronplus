@@ -78,6 +78,8 @@
   "form.enabled": "Enable this task",
   "form.rebootDelay": "Startup Delay (seconds)",
   "form.rebootDelayHint": "Delay after system boot before execution. 0 = immediate",
+  "form.cronBaseTime": "Base Date/Time",
+  "form.cronBaseTimeHint": "Reference time for calculating \"every N\" intervals (e.g. every 2 days, every 2 hours). Defaults to current time",
   "form.customUser": "Custom…",
   "form.customUserPlaceholder": "Enter username",
   "cron.sec": "Sec",

@@ -887,6 +887,21 @@ body {
 }
 .reboot-delay-group input[type="number"]:focus { border-color: var(--border-focus); }
 
+/* ===== Cron Base Time ===== */
+.cron-base-time-group {
+    margin-top: 12px; padding: 10px 14px;
+    background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.cron-base-time-group label {
+    display: block; font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px;
+}
+.cron-base-time-group input[type="datetime-local"] {
+    width: 100%; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text-primary); font-size: 14px; font-family: var(--font-mono); padding: 8px 12px;
+    outline: none; transition: border-color var(--transition);
+}
+.cron-base-time-group input[type="datetime-local"]:focus { border-color: var(--border-focus); }
+
 /* ===== Advanced Settings (details/summary) ===== */
 .advanced-settings {
     border: 1px solid var(--border); border-radius: var(--radius);

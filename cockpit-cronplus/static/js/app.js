@@ -1184,6 +1184,20 @@
         $('#inputRebootDelay').value = task.reboot_delay || 0;
         $('#inputCwd').value = task.cwd || '';
 
+        // Load base time for "every N" interval calculation
+        if (task.cron_base_time) {
+            // Convert "YYYY-MM-DD HH:mm:ss" to "YYYY-MM-DDTHH:mm:ss" for datetime-local
+            var bt = task.cron_base_time.replace(' ', 'T').slice(0, 19);
+            $('#inputCronBaseTime').value = bt;
+        } else {
+            // Default to current datetime
+            var now = new Date();
+            var pad = function (n) { return String(n).padStart(2, '0'); };
+            var nowStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
+                         'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+            $('#inputCronBaseTime').value = nowStr;
+        }
+
         var envVars = task.env_vars || {};
         if (typeof envVars === 'string') { try { envVars = JSON.parse(envVars); } catch (e) { envVars = {}; } }
         $('#inputEnvVars').value = Object.keys(envVars).map(function (k) { return k + '=' + envVars[k]; }).join('\n');
@@ -1238,6 +1252,12 @@
         $('#inputTags').value = '';
         $('#inputLogDays').value = 0; $('#inputLogMax').value = 0;
         $('#inputRebootDelay').value = 0;
+        // Set default base time to current datetime
+        var now = new Date();
+        var pad = function (n) { return String(n).padStart(2, '0'); };
+        var nowStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
+                     'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+        $('#inputCronBaseTime').value = nowStr;
         $('#rebootDelayGroup').style.display = 'none';
         $('.cron-fields').style.display = '';
         $('#inputEnvVars').value = 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -1291,6 +1311,7 @@
             log_retention_days: parseInt($('#inputLogDays').value) || 0,
             log_max_entries: parseInt($('#inputLogMax').value) || 0,
             reboot_delay: parseInt($('#inputRebootDelay').value) || 0,
+            cron_base_time: ($('#inputCronBaseTime').value || '').replace('T', ' '),
             env_vars: envVars,
             cwd: ($('#inputCwd').value || '').trim()
         };
@@ -1325,7 +1346,20 @@
             return;
         }
         try {
-            var runs = CronUtil.getNextRunTimes(sec, min, hour, day, month, dow);
+            // Use base time for "every N" interval calculation if available
+            var baseTimeStr = ($('#inputCronBaseTime') || {}).value || '';
+            var hasStepPattern = [sec, min, hour, day].some(function (f) { return f && f.indexOf('/') >= 0; });
+            var runs;
+            if (baseTimeStr && hasStepPattern) {
+                var baseTime = new Date(baseTimeStr);
+                if (!isNaN(baseTime.getTime())) {
+                    runs = CronUtil.getNextRunTimesFromBase(sec, min, hour, day, month, dow, baseTime, 5);
+                } else {
+                    runs = CronUtil.getNextRunTimes(sec, min, hour, day, month, dow);
+                }
+            } else {
+                runs = CronUtil.getNextRunTimes(sec, min, hour, day, month, dow);
+            }
             if (!runs.length) { container.innerHTML = '<div class="special-note">' + I18n.t('special.cannotCalc') + '</div>'; return; }
             container.innerHTML = runs.map(function (d, i) {
                 return '<div class="next-run-item"><span class="run-index">#' + (i + 1) + '</span>' +
@@ -1871,6 +1905,13 @@
             $('.cron-fields').style.display = '';
             CronUtil.updatePreview(); updateNextRuns();
         });
+
+        // Base time input change — recalculate next runs
+        var baseTimeInput = $('#inputCronBaseTime');
+        if (baseTimeInput) {
+            baseTimeInput.addEventListener('input', function () { updateNextRuns(); });
+            baseTimeInput.addEventListener('change', function () { updateNextRuns(); });
+        }
 
         $('#taskList').addEventListener('click', function (e) {
             var btn = e.target.closest('[data-action]');

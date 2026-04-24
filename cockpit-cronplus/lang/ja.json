@@ -78,6 +78,9 @@
   "form.enabled": "このタスクを有効にする",
   "form.rebootDelay": "起動遅延（秒）",
   "form.rebootDelayHint": "システム起動後の実行遅延。0 = 即時実行",
+  "form.cronBaseTime": "Base Date/Time",
+  "form.cronBaseTimeHint": "Reference time for calculating every N intervals",
+
   "form.customUser": "カスタム…",
   "form.customUserPlaceholder": "ユーザー名を入力",
   "cron.sec": "秒",

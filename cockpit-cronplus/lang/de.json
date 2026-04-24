@@ -78,6 +78,9 @@
   "form.enabled": "Aufgabe aktivieren",
   "form.rebootDelay": "Startverzögerung (Sekunden)",
   "form.rebootDelayHint": "Verzögerung nach Systemstart. 0 = sofort",
+  "form.cronBaseTime": "Base Date/Time",
+  "form.cronBaseTimeHint": "Reference time for calculating every N intervals",
+
   "form.customUser": "Benutzerdefiniert…",
   "form.customUserPlaceholder": "Benutzername eingeben",
   "cron.sec": "Sek",

@@ -78,6 +78,9 @@
   "form.enabled": "Activer cette tâche",
   "form.rebootDelay": "Délai au démarrage (secondes)",
   "form.rebootDelayHint": "Délai après le démarrage du système. 0 = immédiat",
+  "form.cronBaseTime": "Base Date/Time",
+  "form.cronBaseTimeHint": "Reference time for calculating every N intervals",
+
   "form.customUser": "Personnalisé…",
   "form.customUserPlaceholder": "Nom d'utilisateur",
   "cron.sec": "Sec",

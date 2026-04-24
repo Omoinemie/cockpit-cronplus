@@ -78,6 +78,9 @@
   "form.enabled": "이 작업 활성화",
   "form.rebootDelay": "시작 지연 (초)",
   "form.rebootDelayHint": "시스템 부팅 후 실행 지연. 0 = 즉시 실행",
+  "form.cronBaseTime": "Base Date/Time",
+  "form.cronBaseTimeHint": "Reference time for calculating every N intervals",
+
   "form.customUser": "사용자 지정…",
   "form.customUserPlaceholder": "사용자명 입력",
   "cron.sec": "초",

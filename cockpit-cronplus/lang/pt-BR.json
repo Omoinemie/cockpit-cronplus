@@ -78,6 +78,9 @@
   "form.enabled": "Ativar esta tarefa",
   "form.rebootDelay": "Atraso na inicialização (segundos)",
   "form.rebootDelayHint": "Atraso após boot do sistema. 0 = imediato",
+  "form.cronBaseTime": "Base Date/Time",
+  "form.cronBaseTimeHint": "Reference time for calculating every N intervals",
+
   "form.customUser": "Personalizado…",
   "form.customUserPlaceholder": "Digite o nome de usuário",
   "cron.sec": "Seg",
