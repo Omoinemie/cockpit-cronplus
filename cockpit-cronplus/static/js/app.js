@@ -674,15 +674,20 @@
                 nextRunStr = task.schedule;
             }
 
-            // Row 3: task params (badges)
+            // Row 3: task params (all advanced params)
             var params = '';
             if (task.schedule) params += '<span class="task-schedule">' + Utils.escHtml(task.schedule) + '</span>';
             params += '<span class="task-user">' + Utils.escHtml(task.run_user || 'root') + '</span>';
             if (task.cwd) params += '<span class="task-cwd" title="工作目录"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> ' + Utils.escHtml(task.cwd) + '</span>';
             if (task.timeout > 0) params += '<span class="badge badge-info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ' + task.timeout + 's</span>';
             if (task.max_retries > 0) params += '<span class="badge badge-info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> ' + task.max_retries + '</span>';
-            if (task.tags) params += '<span class="badge badge-tags">' + Utils.escHtml(task.tags) + '</span>';
-            if (task.comment) params += '<span class="task-comment">' + Utils.escHtml(task.comment) + '</span>';
+            if (task.max_concurrent > 1) params += '<span class="badge badge-info">×' + task.max_concurrent + '</span>';
+            if (task.max_runs > 0) params += '<span class="badge badge-info">' + (task.run_count || 0) + '/' + task.max_runs + '</span>';
+            if (task.kill_previous) params += '<span class="badge badge-info">kill</span>';
+
+            // Row 5: tags
+            var tagsRow = '';
+            if (task.tags) tagsRow = '<div class="task-tags"><span class="badge badge-tags">' + Utils.escHtml(task.tags) + '</span></div>';
 
             // Row 4: time info + remaining runs
             var timeRow = '';
@@ -725,14 +730,16 @@
                 '<input type="checkbox" ' + (task.enabled !== false ? 'checked' : '') + ' data-action="toggle" data-index="' + idx + '">' +
                 '<span class="toggle-slider"></span></label>' +
                 '<div class="task-info">' +
-                // Row 1: ID + Title
-                '<div class="task-title"><span class="task-id-badge">#' + task.id + '</span>' + (task.title ? Utils.escHtml(task.title) : '') + '</div>' +
+                // Row 1: ID + Title + Comment
+                '<div class="task-title"><span class="task-id-badge">#' + task.id + '</span>' + (task.title ? Utils.escHtml(task.title) : '') + (task.comment ? ' <span class="task-comment">' + Utils.escHtml(task.comment) + '</span>' : '') + '</div>' +
                 // Row 2: Command excerpt
                 '<div class="task-command" title="' + Utils.escHtml(task.command || '') + '">' + Utils.escHtml(firstLine) + '</div>' +
                 // Row 3: Params
                 '<div class="task-params">' + params + '</div>' +
                 // Row 4: Time info
                 '<div class="task-time-info">' + timeRow + '</div>' +
+                // Row 5: Tags
+                tagsRow +
                 '</div>' +
                 '<div class="task-actions">' +
                 '<button class="btn btn-sm btn-secondary" data-action="run" data-index="' + idx + '" data-i18n-title="btn.run">' +

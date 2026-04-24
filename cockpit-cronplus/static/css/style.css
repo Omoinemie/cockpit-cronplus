@@ -341,6 +341,11 @@ body {
     display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; margin-top: 4px;
 }
 
+/* Task tags row (row 5) */
+.task-tags {
+    display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap;
+}
+
 .task-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* ===== Log List ===== */
