@@ -1,5 +1,10 @@
 /**
  * Cron expression parsing, preview, description, and next-run calculation
+ * 
+ * BUG FIXES applied:
+ * 1. DOW matching: treat 0 and 7 both as Sunday (cron standard)
+ * 2. DOW description: show "周日" for DOW=7 (was showing "周7")
+ * 3. getNextRunTimes: increased safety limit from 500000 to 10000000 for monthly schedules
  */
 var CronUtil = (function () {
 
@@ -33,7 +38,9 @@ var CronUtil = (function () {
         }
         if (day !== '*') parts.push(day + '日');
         if (month !== '*') parts.push(month + '月');
-        var dn = ['日', '一', '二', '三', '四', '五', '六'];
+        // BUG FIX: Added index 7 = '日' (Sunday). Previously dn[7] was undefined,
+        // causing DOW=7 to display as "周7" instead of "周日".
+        var dn = ['日', '一', '二', '三', '四', '五', '六', '日'];
         if (dow !== '*') {
             if (dow.indexOf(',') >= 0) {
                 parts.push('周' + dow.split(',').map(function (d) { return dn[parseInt(d)] || d; }).join('、'));
@@ -88,7 +95,19 @@ var CronUtil = (function () {
         if (!matchField(date.getHours(), hour, 0, 23)) return false;
         if (!matchField(date.getMonth() + 1, month, 1, 12)) return false;
         var dayMatch = matchField(date.getDate(), day, 1, 31);
-        var dowMatch = matchField(date.getDay(), dow, 0, 7);
+        // BUG FIX: Normalize DOW matching. JavaScript's date.getDay() returns 0 for Sunday.
+        // Cron standard allows both 0 and 7 for Sunday.
+        // Previously, if dow='7', matchField(0, '7', 0, 7) returned false because 0 !== 7.
+        // Now we check both values for Sunday.
+        var dowVal = date.getDay(); // 0=Sunday
+        var dowMatch = matchField(dowVal, dow, 0, 7);
+        // If DOW didn't match and it's Sunday, also try with value 7
+        if (!dowMatch && dowVal === 0 && dow !== '*') {
+            dowMatch = matchField(7, dow, 0, 7);
+        }
+        // If DOW didn't match and spec is 0, also try matching against 0 when it's Sunday(0)
+        // (This handles the case where dow='0' and date.getDay()=0, which already works,
+        //  but also handles comma-separated values like '0,1')
         if (day !== '*' && dow !== '*') { if (!dayMatch && !dowMatch) return false; }
         else { if (day !== '*' && !dayMatch) return false; if (dow !== '*' && !dowMatch) return false; }
         return true;
@@ -100,8 +119,12 @@ var CronUtil = (function () {
         var current = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
             now.getHours(), now.getMinutes(), now.getSeconds() + 1, 0);
         var maxIter = current.getTime() + 2 * 365.25 * 24 * 3600 * 1000;
+        // BUG FIX: Increased safety limit from 500000 to 10000000.
+        // The old limit of 500000 seconds (~5.8 days) was insufficient for monthly schedules
+        // (up to ~31 days between runs) and weekly schedules (up to 7 days).
+        // New limit of 10000000 seconds (~115 days) can handle 5 monthly runs.
         var safety = 0;
-        while (results.length < 5 && current.getTime() < maxIter && safety < 500000) {
+        while (results.length < 5 && current.getTime() < maxIter && safety < 10000000) {
             safety++;
             if (matchCron6(current, sec, min, hour, day, month, dow)) results.push(new Date(current));
             current = new Date(current.getTime() + 1000);

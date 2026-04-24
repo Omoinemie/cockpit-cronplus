@@ -80,11 +80,14 @@ func NextRunTime(fields [6]string, after time.Time) time.Time {
 
 		// Check day + dow (OR logic when both specified)
 		dayMatch := dayMatcher.Matches(current.Day())
-		dowVal := int(current.Weekday())
-		if dowVal == 0 {
-			dowVal = 7
-		}
+		dowVal := int(current.Weekday()) // 0=Sunday, 1=Monday, ..., 6=Saturday
+		// BUG FIX: Check both 0 and 7 for Sunday (cron standard allows both 0 and 7 for Sunday)
+		// Previously, the code converted Sunday(0) to 7, which broke DOW=0 matching.
 		dowMatch := dowMatcher.Matches(dowVal)
+		if !dowMatch && dowVal == 0 {
+			// Also check 7 for Sunday (cron convention: both 0 and 7 = Sunday)
+			dowMatch = dowMatcher.Matches(7)
+		}
 
 		day := fields[3]
 		dow := fields[5]
