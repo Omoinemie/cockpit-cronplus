@@ -40,6 +40,11 @@ func (s *Store) CreateTask(t *model.Task) error {
 	s.taskMu.Lock()
 	defer s.taskMu.Unlock()
 
+	// Validate before write
+	if err := model.ValidateTask(t); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
 	var tasks []model.Task
 	ReadJSON(s.ConfPath, &tasks)
 	if tasks == nil {
@@ -62,6 +67,11 @@ func (s *Store) CreateTask(t *model.Task) error {
 func (s *Store) UpdateTask(id int, t *model.Task) error {
 	s.taskMu.Lock()
 	defer s.taskMu.Unlock()
+
+	// Validate before write
+	if err := model.ValidateTask(t); err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
 
 	var tasks []model.Task
 	if _, err := ReadJSON(s.ConfPath, &tasks); err != nil {

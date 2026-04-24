@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,12 +48,26 @@ type Stats struct {
 }
 
 func New(s *store.Store, pool Pool) *Scheduler {
-	return &Scheduler{
+	sched := &Scheduler{
 		store:       s,
 		pool:        pool,
 		taskLastRun: make(map[int]time.Time),
 		rebootFired: !store.RebootDetected(), // if marker exists, reboot already fired
 	}
+
+	// Restore lastRun from persisted state
+	if state, err := s.LoadState(); err == nil {
+		for taskID, ts := range state.TaskLastRun {
+			if ts > 0 {
+				sched.taskLastRun[taskID] = time.Unix(ts, 0)
+			}
+		}
+		if len(state.TaskLastRun) > 0 {
+			log.Printf("Scheduler: restored %d task last-run timestamps from state", len(state.TaskLastRun))
+		}
+	}
+
+	return sched
 }
 
 // Start begins the scheduling loop in a background goroutine.
@@ -105,6 +120,13 @@ func (s *Scheduler) loop(ctx context.Context) {
 		// Periodic stale cleanup (every 5 min)
 		if time.Since(lastCleanup) > 5*time.Minute {
 			lastCleanup = time.Now()
+
+			// Cleanup logs based on per-task retention settings
+			if tasks, err := s.store.ListTasks(); err == nil {
+				if err := s.store.CleanupLogs(tasks); err != nil {
+					log.Printf("Scheduler: log cleanup error: %v", err)
+				}
+			}
 		}
 
 		tasks, err := s.loadTasks()
@@ -157,12 +179,20 @@ func (s *Scheduler) loop(ctx context.Context) {
 							s.stats.TasksExecuted++
 							s.stats.LastRun = time.Now().Format(time.RFC3339)
 							s.lastRunMu.Unlock()
+
+							// Persist lastRun for @reboot tasks
+							s.store.SetTaskLastRun(t.ID, time.Now().Unix())
 						}(task)
 					} else {
 						log.Printf("Task [%d] @reboot: firing now", task.ID)
 						s.pool.Dispatch(task, "auto")
+						s.lastRunMu.Lock()
 						s.stats.TasksExecuted++
 						s.stats.LastRun = time.Now().Format(time.RFC3339)
+						s.lastRunMu.Unlock()
+
+						// Persist lastRun for @reboot tasks
+						s.store.SetTaskLastRun(task.ID, time.Now().Unix())
 					}
 				}
 				continue
@@ -200,13 +230,9 @@ func (s *Scheduler) loop(ctx context.Context) {
 		}
 
 		// Sort by trigger time
-		for i := 0; i < len(candidates)-1; i++ {
-			for j := i + 1; j < len(candidates); j++ {
-				if candidates[j].at.Before(candidates[i].at) {
-					candidates[i], candidates[j] = candidates[j], candidates[i]
-				}
-			}
-		}
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].at.Before(candidates[j].at)
+		})
 
 		// Execute all candidates whose time <= now
 		executed := false
@@ -244,6 +270,12 @@ func (s *Scheduler) loop(ctx context.Context) {
 			s.stats.TasksExecuted++
 			s.stats.LastRun = time.Now().Format(time.RFC3339)
 			s.lastRunMu.Unlock()
+
+			// Persist lastRun to state.json
+			if err := s.store.SetTaskLastRun(taskID, c.at.Unix()); err != nil {
+				log.Printf("Scheduler: failed to persist lastRun for task [%d]: %v", taskID, err)
+			}
+
 			s.lastNextTaskID = 0 // reset so next task gets logged
 			s.lastNextTime = ""
 			executed = true

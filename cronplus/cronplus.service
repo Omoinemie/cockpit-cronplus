@@ -19,6 +19,8 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 ProtectHome=yes
+ProtectClock=yes
+ProtectHostname=yes
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
@@ -26,6 +28,8 @@ LockPersonality=yes
 SystemCallArchitectures=native
 RemoveIPC=yes
 MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_KILL CAP_DAC_OVERRIDE
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target

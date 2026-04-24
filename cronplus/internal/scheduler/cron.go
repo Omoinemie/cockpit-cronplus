@@ -10,18 +10,25 @@ import (
 
 // Special schedules mapped to 6-field cron equivalents.
 var specials = map[string][6]string{
-	"@reboot": {},
+	"@reboot":   {},
+	"@yearly":   {"0", "0", "0", "1", "1", "*"},
+	"@annually": {"0", "0", "0", "1", "1", "*"},
+	"@monthly":  {"0", "0", "0", "1", "*", "*"},
+	"@weekly":   {"0", "0", "0", "*", "*", "0"},
+	"@daily":    {"0", "0", "0", "*", "*", "*"},
+	"@midnight": {"0", "0", "0", "*", "*", "*"},
+	"@hourly":   {"0", "0", "*", "*", "*", "*"},
 }
 
 // ParseSchedule parses a 5 or 6 field cron expression into [second, minute, hour, day, month, dow].
 func ParseSchedule(schedule string) ([6]string, error) {
 	if strings.HasPrefix(schedule, "@") {
+		if schedule == "@reboot" {
+			return [6]string{}, fmt.Errorf("@reboot has no cron fields")
+		}
 		cron, ok := specials[schedule]
 		if !ok {
 			return [6]string{}, fmt.Errorf("unknown special schedule: %s", schedule)
-		}
-		if schedule == "@reboot" {
-			return [6]string{}, fmt.Errorf("@reboot has no cron fields")
 		}
 		return cron, nil
 	}
@@ -287,53 +294,3 @@ func sortedKeys(m map[int]bool) []int {
 
 var rangeRe = regexp.MustCompile(`^(\d+)-(\d+)$`)
 var stepRe = regexp.MustCompile(`^(.*?)/(\d+)$`)
-
-// matchField checks if value matches a single cron field spec (legacy, kept for compatibility).
-func matchField(value int, spec string, minVal, maxVal int) bool {
-	if spec == "*" {
-		return true
-	}
-	// Comma-separated parts
-	if strings.Contains(spec, ",") {
-		for _, s := range strings.Split(spec, ",") {
-			if matchField(value, strings.TrimSpace(s), minVal, maxVal) {
-				return true
-			}
-		}
-		return false
-	}
-	// Step: */N or range/N
-	if m := stepRe.FindStringSubmatch(spec); m != nil {
-		step, _ := strconv.Atoi(m[2])
-		if step < 1 {
-			return false
-		}
-		base := m[1]
-		if base == "*" {
-			return (value-minVal)%step == 0
-		}
-		if strings.Contains(base, "-") {
-			parts := strings.SplitN(base, "-", 2)
-			lo, _ := strconv.Atoi(parts[0])
-			hi, _ := strconv.Atoi(parts[1])
-			return value >= lo && value <= hi && (value-lo)%step == 0
-		}
-		v, err := strconv.Atoi(base)
-		if err != nil {
-			return false
-		}
-		return value == v
-	}
-	// Range: N-M
-	if m := rangeRe.FindStringSubmatch(spec); m != nil {
-		lo, _ := strconv.Atoi(m[1])
-		hi, _ := strconv.Atoi(m[2])
-		return value >= lo && value <= hi
-	}
-	// Single number
-	v, err := strconv.Atoi(spec)
-	if err != nil {
-		return false
-	}
-	return value == v
-}

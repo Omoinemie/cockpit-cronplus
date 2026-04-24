@@ -557,13 +557,10 @@ func cmdImport(args []string) int {
 			}
 		}
 		// Validate run_user
-		if t.RunUser != "" {
-			safeUser := strings.TrimSpace(t.RunUser)
-			if safeUser == "" || strings.ContainsAny(safeUser, " \t\n\r;'\"`|&$(){}[]") {
-				fmt.Fprintf(os.Stderr, "Warning: task %q has suspicious run_user %q, skipping\n", t.Title, t.RunUser)
-				skipped++
-				continue
-			}
+		if err := model.ValidateRunUser(t.RunUser); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: task %q: %v, skipping\n", t.Title, err)
+			skipped++
+			continue
 		}
 		t.ID = 0 // auto-assign
 		if err := s.CreateTask(&t); err != nil {
@@ -639,28 +636,83 @@ func cmdSettings(args []string) int {
 		}
 		settings, _ := s.ReadSettings()
 		key, value := args[1], args[2]
-		// Simple key setting via reflection-free approach
+
 		switch key {
 		case "language":
+			allowed := []string{"en", "zh-CN", "ja", "ko", "de", "es", "fr", "pt-BR", "ru"}
+			valid := false
+			for _, a := range allowed {
+				if value == a {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				fmt.Fprintf(os.Stderr, "Invalid language: %s (allowed: %v)\n", value, allowed)
+				return 1
+			}
 			settings.Language = value
 		case "theme":
+			if value != "auto" && value != "dark" && value != "light" {
+				fmt.Fprintf(os.Stderr, "Invalid theme: %s (allowed: auto, dark, light)\n", value)
+				return 1
+			}
 			settings.Theme = value
 		case "defaultRunUser":
+			if err := model.ValidateRunUser(value); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return 1
+			}
 			settings.DefaultRunUser = value
 		case "defaultTimeout":
-			settings.DefaultTimeout, _ = strconv.Atoi(value)
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 0 || v > 86400 {
+				fmt.Fprintf(os.Stderr, "Invalid timeout: %s (must be 0-86400 seconds)\n", value)
+				return 1
+			}
+			settings.DefaultTimeout = v
 		case "defaultMaxRetries":
-			settings.DefaultMaxRetries, _ = strconv.Atoi(value)
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 0 || v > 100 {
+				fmt.Fprintf(os.Stderr, "Invalid max_retries: %s (must be 0-100)\n", value)
+				return 1
+			}
+			settings.DefaultMaxRetries = v
 		case "defaultRetryInterval":
-			settings.DefaultRetryInterval, _ = strconv.Atoi(value)
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 0 || v > 86400 {
+				fmt.Fprintf(os.Stderr, "Invalid retry_interval: %s (must be 0-86400 seconds)\n", value)
+				return 1
+			}
+			settings.DefaultRetryInterval = v
 		case "autoRefreshInterval":
-			settings.AutoRefreshInterval, _ = strconv.Atoi(value)
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 1 || v > 3600 {
+				fmt.Fprintf(os.Stderr, "Invalid autoRefreshInterval: %s (must be 1-3600 seconds)\n", value)
+				return 1
+			}
+			settings.AutoRefreshInterval = v
 		case "logPageSize":
-			settings.LogPageSize, _ = strconv.Atoi(value)
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 1 || v > 1000 {
+				fmt.Fprintf(os.Stderr, "Invalid logPageSize: %s (must be 1-1000)\n", value)
+				return 1
+			}
+			settings.LogPageSize = v
 		case "logMaxBytes":
-			settings.LogMaxBytes, _ = strconv.Atoi(value)
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 1024 || v > 100*1024*1024 {
+				fmt.Fprintf(os.Stderr, "Invalid logMaxBytes: %s (must be 1KB-100MB)\n", value)
+				return 1
+			}
+			settings.LogMaxBytes = v
 		case "logBackupCount":
-			settings.LogBackupCount, _ = strconv.Atoi(value)
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 0 || v > 100 {
+				fmt.Fprintf(os.Stderr, "Invalid logBackupCount: %s (must be 0-100)\n", value)
+				return 1
+			}
+			settings.LogBackupCount = v
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown setting: %s\n", key)
 			return 1
