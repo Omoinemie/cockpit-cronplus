@@ -9,6 +9,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 配置 Git 用户信息
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
       - name: 应用根目录下的 patch 文件
         run: |
           for patch in *.patch; do
@@ -23,8 +28,6 @@ jobs:
 
       - name: 提交并推送
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
           git add .
           if git diff --staged --quiet; then
             echo "没有新的变更需要提交"
