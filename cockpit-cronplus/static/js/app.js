@@ -19,6 +19,12 @@
     var SETTINGS_FILE = '/opt/cronplus/settings.json';
     var DAEMON_LOG_FILE = '/opt/cronplus/logs/cronplus.log';
 
+    var SVG_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
+    var SVG_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>';
+    var SVG_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    var SVG_CHEVRON_DOWN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="6 9 12 15 18 9"/></svg>';
+    var SVG_CHEVRON_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><polyline points="18 15 12 9 6 15"/></svg>';
+
     // ===== State =====
     var tasks = [];
     var logs = [];
@@ -350,9 +356,7 @@
     }
 
     function escHtml(s) {
-        var d = document.createElement('div');
-        d.textContent = s;
-        return d.innerHTML;
+        return Utils.escHtml(s);
     }
 
     async function loadDaemonLog() {
@@ -870,7 +874,7 @@
                     '<div class="log-detail-bar">' +
                     '<div class="log-detail-header" data-expand="' + globalIdx + '">' +
                     '<span class="log-detail-label" data-i18n="log.label">' + I18n.t('log.label') + '</span>' +
-                    '<span class="log-expand-toggle">\u25bc ' + I18n.t('log.expand').replace('▼ ', '') + '</span></div>' +
+                    '<span class="log-expand-toggle">' + SVG_CHEVRON_DOWN + ' ' + I18n.t('log.expand') + '</span></div>' +
                     '<div class="log-detail-body">' +
                     '<div class="log-cmd-bar"><span class="log-cmd-label" data-i18n="log.cmdLabel">' + I18n.t('log.cmdLabel') + '</span>' +
                     '<code class="log-cmd-text">' + Utils.escHtml(log.command || '') + '</code>' +
@@ -1039,7 +1043,7 @@
         var duration = Date.now() - runStartTime;
 
         statusEl.className = 'terminal-status error';
-        statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span>✗</span> <span>' + I18n.t('btn.stop') + '</span>';
+        statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span class="status-icon-fail">' + SVG_X + '</span> <span>' + I18n.t('btn.stop') + '</span>';
         durationEl.textContent = (duration / 1000).toFixed(1) + 's';
         btn.textContent = I18n.t('btn.run');
         btn.className = 'btn btn-primary btn-sm';
@@ -1064,10 +1068,10 @@
 
         if (status === 'success') {
             statusEl.className = 'terminal-status success';
-            statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span>✓</span> <span>' + I18n.t('output.success') + '</span>';
+            statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span class="status-icon-ok">' + SVG_CHECK + '</span> <span>' + I18n.t('output.success') + '</span>';
         } else {
             statusEl.className = 'terminal-status error';
-            statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span>✗</span> <span>' + I18n.t('output.failed') + '</span>';
+            statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span class="status-icon-fail">' + SVG_X + '</span> <span>' + I18n.t('output.failed') + '</span>';
         }
 
         // Button back to "运行" for re-run
@@ -1186,16 +1190,10 @@
 
         // Load base time for "every N" interval calculation
         if (task.cron_base_time) {
-            // Convert "YYYY-MM-DD HH:mm:ss" to "YYYY-MM-DDTHH:mm:ss" for datetime-local
             var bt = task.cron_base_time.replace(' ', 'T').slice(0, 19);
             $('#inputCronBaseTime').value = bt;
         } else {
-            // Default to current datetime
-            var now = new Date();
-            var pad = function (n) { return String(n).padStart(2, '0'); };
-            var nowStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
-                         'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
-            $('#inputCronBaseTime').value = nowStr;
+            $('#inputCronBaseTime').value = '';
         }
 
         var envVars = task.env_vars || {};
@@ -1346,9 +1344,18 @@
             return;
         }
         try {
-            // Use base time for "every N" interval calculation if available
-            var baseTimeStr = ($('#inputCronBaseTime') || {}).value || '';
             var hasStepPattern = [sec, min, hour, day].some(function (f) { return f && f.indexOf('/') >= 0; });
+            var baseTimeStr = ($('#inputCronBaseTime') || {}).value || '';
+            var hintEl = $('#nextRunsHint');
+            if (hintEl) {
+                if (hasStepPattern) {
+                    hintEl.innerHTML = SVG_EDIT + ' ' + I18n.t('form.anchorHint');
+                    hintEl.style.display = '';
+                } else {
+                    hintEl.textContent = '';
+                    hintEl.style.display = 'none';
+                }
+            }
             var runs;
             if (baseTimeStr && hasStepPattern) {
                 var baseTime = new Date(baseTimeStr);
@@ -1362,11 +1369,150 @@
             }
             if (!runs.length) { container.innerHTML = '<div class="special-note">' + I18n.t('special.cannotCalc') + '</div>'; return; }
             container.innerHTML = runs.map(function (d, i) {
-                return '<div class="next-run-item"><span class="run-index">#' + (i + 1) + '</span>' +
-                    '<span>' + d.toLocaleString('zh-CN', { hour12: false }) + '</span>' +
-                    '<span class="run-relative">' + TimeUtil.relative(d) + '</span></div>';
+                var editBtn = '';
+                if (i === 0 && hasStepPattern) {
+                    editBtn = '<button type="button" class="btn-edit-anchor" title="' + I18n.t('form.editAnchor') + '" onclick="App.editFirstRunTime()">' + SVG_EDIT + '</button>';
+                }
+                return '<div class="next-run-item' + (i === 0 ? ' first-run' : '') + '">' +
+                    '<span class="run-index">#' + (i + 1) + '</span>' +
+                    '<span class="run-datetime" id="runTime' + i + '">' + d.toLocaleString('zh-CN', { hour12: false }) + '</span>' +
+                    '<span class="run-relative">' + TimeUtil.relative(d) + '</span>' +
+                    editBtn + '</div>';
             }).join('');
+            container._runs = runs;
+            container._fields = [sec, min, hour, day, month, dow];
         } catch (e) { container.innerHTML = '<div class="special-note">' + I18n.t('special.calcError') + '</div>'; }
+    }
+
+    function editFirstRunTime() {
+        var $ = Utils.$;
+        var container = $('#nextRuns');
+        var runs = container._runs;
+        if (!runs || !runs.length) return;
+        var firstRun = runs[0];
+        var el = $('#runTime0');
+        if (!el) return;
+
+        var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+        var y = firstRun.getFullYear();
+        var mo = firstRun.getMonth() + 1;
+        var d = firstRun.getDate();
+        var h = firstRun.getHours();
+        var mi = firstRun.getMinutes();
+        var s = firstRun.getSeconds();
+
+        function numInput(id, val, min, max, w) {
+            return '<input type="number" class="anchor-num" id="' + id + '" value="' + val + '" min="' + min + '" max="' + max + '" style="width:' + w + 'px">';
+        }
+
+        el.innerHTML =
+            numInput('anchorY', y, 2020, 2099, 68) + '<span class="anchor-sep">-</span>' +
+            numInput('anchorMo', pad(mo), 1, 12, 50) + '<span class="anchor-sep">-</span>' +
+            numInput('anchorD', pad(d), 1, 31, 50) + '<span class="anchor-gap"></span>' +
+            numInput('anchorH', pad(h), 0, 23, 50) + '<span class="anchor-sep">:</span>' +
+            numInput('anchorMi', pad(mi), 0, 59, 50) + '<span class="anchor-sep">:</span>' +
+            numInput('anchorS', pad(s), 0, 59, 50) +
+            '<button type="button" class="btn-confirm-anchor" onclick="App.confirmAnchor()">' + SVG_CHECK + '</button>' +
+            '<button type="button" class="btn-cancel-anchor" onclick="App.cancelAnchor()">' + SVG_X + '</button>';
+
+        var firstItem = el.closest('.next-run-item');
+        if (firstItem) {
+            var relSpan = firstItem.querySelector('.run-relative');
+            if (relSpan) relSpan.style.display = 'none';
+            var editBtn = firstItem.querySelector('.btn-edit-anchor');
+            if (editBtn) editBtn.style.display = 'none';
+        }
+
+        document.getElementById('anchorY').focus();
+        document.getElementById('anchorY').select();
+    }
+
+    function cancelAnchor() {
+        updateNextRuns();
+    }
+
+    function confirmAnchor() {
+        var $ = Utils.$;
+        var y = parseInt($('#anchorY').value);
+        var mo = parseInt($('#anchorMo').value);
+        var d = parseInt($('#anchorD').value);
+        var h = parseInt($('#anchorH').value);
+        var mi = parseInt($('#anchorMi').value);
+        var s = parseInt($('#anchorS').value);
+
+        if (isNaN(y) || isNaN(mo) || isNaN(d) || isNaN(h) || isNaN(mi) || isNaN(s)) {
+            showToast(I18n.t('special.calcError'), 'error');
+            updateNextRuns();
+            return;
+        }
+        if (y < 2020 || y > 2099 || mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 || s < 0 || s > 59) {
+            showToast(I18n.t('special.calcError'), 'error');
+            updateNextRuns();
+            return;
+        }
+        var testDate = new Date(y, mo - 1, d, h, mi, s);
+        if (testDate.getFullYear() !== y || testDate.getMonth() !== mo - 1 || testDate.getDate() !== d) {
+            showToast(I18n.t('special.calcError'), 'error');
+            updateNextRuns();
+            return;
+        }
+
+        var container = $('#nextRuns');
+        var fields = container._fields;
+        var origSec = fields[0], origMin = fields[1], origHour = fields[2], origDay = fields[3], origMonth = fields[4], origDow = fields[5];
+        var origRun = container._runs[0];
+
+        var newSec = origSec;
+        var newMin = origMin;
+        var newHour = origHour;
+
+        function isFixedField(f) {
+            if (!f || f === '*') return false;
+            if (f.indexOf('/') >= 0) return false;
+            if (f.indexOf(',') >= 0) return false;
+            if (f.indexOf('-') >= 0) return false;
+            return /^\d+$/.test(f);
+        }
+
+        if (s !== origRun.getSeconds() && isFixedField(origSec)) {
+            newSec = '' + s;
+            $('#cronSec').value = newSec;
+        }
+        if (mi !== origRun.getMinutes() && isFixedField(origMin)) {
+            newMin = '' + mi;
+            $('#cronMin').value = newMin;
+        }
+        if (h !== origRun.getHours() && isFixedField(origHour)) {
+            newHour = '' + h;
+            $('#cronHour').value = newHour;
+        }
+
+        var pad2 = function (n) { return n < 10 ? '0' + n : '' + n; };
+        var baseStr = y + '-' + pad2(mo) + '-' + pad2(d) + ' ' + pad2(h) + ':' + pad2(mi) + ':' + pad2(s);
+        var hiddenInput = $('#inputCronBaseTime');
+        if (hiddenInput) {
+            hiddenInput.value = baseStr;
+        }
+
+        var newFields = [newSec, newMin, newHour, origDay, origMonth, origDow];
+        var newRuns = CronUtil.getNextRunTimesFromBase(newSec, newMin, newHour, origDay, origMonth, origDow, testDate, 5);
+        if (!newRuns.length) { updateNextRuns(); return; }
+
+        container.innerHTML = newRuns.map(function (rd, i) {
+            var editBtn = '';
+            if (i === 0) {
+                editBtn = '<button type="button" class="btn-edit-anchor" title="' + I18n.t('form.editAnchor') + '" onclick="App.editFirstRunTime()">' + SVG_EDIT + '</button>';
+            }
+            return '<div class="next-run-item' + (i === 0 ? ' first-run' : '') + '">' +
+                '<span class="run-index">#' + (i + 1) + '</span>' +
+                '<span class="run-datetime" id="runTime' + i + '">' + rd.toLocaleString('zh-CN', { hour12: false }) + '</span>' +
+                '<span class="run-relative">' + TimeUtil.relative(rd) + '</span>' +
+                editBtn + '</div>';
+        }).join('');
+        container._runs = newRuns;
+        container._fields = newFields;
+
+        CronUtil.updatePreview();
     }
 
     // ===== Import / Export =====
@@ -1446,7 +1592,36 @@
     async function saveRawEditor() {
         var content = $('#rawEditor').value;
         try {
-            JSON.parse(content);
+            var parsed = JSON.parse(content);
+            if (!Array.isArray(parsed)) {
+                showToast(I18n.t('raw.jsonError') + ': ' + I18n.t('task.loadFailed'), 'error');
+                $('#rawStatus').textContent = I18n.t('raw.jsonError');
+                $('#rawStatus').className = 'status-text error';
+                return;
+            }
+            var userRe = /^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/;
+            var scheduleRe = /^(\S+\s+){4,5}\S+$|^@(reboot|yearly|annually|monthly|weekly|daily|midnight|hourly)$/;
+            for (var i = 0; i < parsed.length; i++) {
+                var t = parsed[i];
+                if (!t.command) {
+                    showToast(I18n.t('raw.jsonError') + ': task[' + i + '] missing command', 'error');
+                    $('#rawStatus').textContent = 'task[' + i + '] missing command';
+                    $('#rawStatus').className = 'status-text error';
+                    return;
+                }
+                if (t.run_user && t.run_user !== 'root' && !userRe.test(t.run_user)) {
+                    showToast(I18n.t('raw.jsonError') + ': task[' + i + '] invalid run_user "' + t.run_user + '"', 'error');
+                    $('#rawStatus').textContent = 'task[' + i + '] invalid run_user';
+                    $('#rawStatus').className = 'status-text error';
+                    return;
+                }
+                if (t.schedule && t.schedule !== '@reboot' && !scheduleRe.test(t.schedule)) {
+                    showToast(I18n.t('raw.jsonError') + ': task[' + i + '] invalid schedule "' + t.schedule + '"', 'error');
+                    $('#rawStatus').textContent = 'task[' + i + '] invalid schedule';
+                    $('#rawStatus').className = 'status-text error';
+                    return;
+                }
+            }
             await Utils.spawn('bash', ['-c', 'printf %s ' + Utils.shellQuote(content) + ' | tee ' + Utils.shellQuote(CONF_FILE) + ' > /dev/null']);
             // Signal daemon to reload config (SIGHUP = hot reload, no restart)
             try {
@@ -1906,13 +2081,6 @@
             CronUtil.updatePreview(); updateNextRuns();
         });
 
-        // Base time input change — recalculate next runs
-        var baseTimeInput = $('#inputCronBaseTime');
-        if (baseTimeInput) {
-            baseTimeInput.addEventListener('input', function () { updateNextRuns(); });
-            baseTimeInput.addEventListener('change', function () { updateNextRuns(); });
-        }
-
         $('#taskList').addEventListener('click', function (e) {
             var btn = e.target.closest('[data-action]');
             if (!btn) return;
@@ -1935,8 +2103,8 @@
                 var entry = expand.closest('.log-entry');
                 entry.classList.toggle('expanded');
                 var toggle = expand.querySelector('.log-expand-toggle');
-                toggle.textContent = entry.classList.contains('expanded') ?
-                    I18n.t('log.collapse') : I18n.t('log.expand');
+                toggle.innerHTML = entry.classList.contains('expanded') ?
+                    SVG_CHEVRON_UP + ' ' + I18n.t('log.collapse') : SVG_CHEVRON_DOWN + ' ' + I18n.t('log.expand');
             }
             var copyBtn = e.target.closest('.btn-copy');
             if (copyBtn) {
@@ -2071,5 +2239,11 @@
             'cleanupOptUser': { label: 'cleanup.userLabel' }
         };
     }
+
+    window.App = {
+        editFirstRunTime: editFirstRunTime,
+        confirmAnchor: confirmAnchor,
+        cancelAnchor: cancelAnchor
+    };
 
 })();

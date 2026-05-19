@@ -87,7 +87,15 @@ func SanitizeEnvVars(envVars map[string]string) (safe map[string]string, rejecte
 			rejected = append(rejected, k)
 			continue
 		}
-		// Allow vars with safe prefixes
+		if strings.HasPrefix(upper, "LD_") {
+			rejected = append(rejected, k)
+			continue
+		}
+		if strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "SECRET") ||
+			strings.Contains(upper, "TOKEN") || strings.Contains(upper, "PRIVATE_KEY") {
+			rejected = append(rejected, k)
+			continue
+		}
 		allowed := false
 		for _, prefix := range safeEnvPrefixes {
 			if strings.HasPrefix(upper, prefix) {
@@ -95,12 +103,6 @@ func SanitizeEnvVars(envVars map[string]string) (safe map[string]string, rejecte
 				break
 			}
 		}
-		// Block vars starting with LD_ (catch-all for linker injection)
-		if strings.HasPrefix(upper, "LD_") {
-			rejected = append(rejected, k)
-			continue
-		}
-		// Allow common safe vars
 		if !allowed {
 			safeCommon := map[string]bool{
 				"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "LC_MESSAGES": true,
@@ -108,13 +110,8 @@ func SanitizeEnvVars(envVars map[string]string) (safe map[string]string, rejecte
 				"SHELL": true, "MAIL": true, "TMPDIR": true, "TMP": true, "TEMP": true,
 			}
 			if !safeCommon[upper] {
-				// Unknown var — allow but log (could be too restrictive to block all)
-				// For now, allow unknown vars but reject dangerous patterns
-				if strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "SECRET") ||
-					strings.Contains(upper, "TOKEN") || strings.Contains(upper, "PRIVATE_KEY") {
-					rejected = append(rejected, k)
-					continue
-				}
+				rejected = append(rejected, k)
+				continue
 			}
 		}
 		safe[k] = v

@@ -52,10 +52,11 @@ func main() {
 		for sig := range sigCh {
 			switch sig {
 			case syscall.SIGTERM, syscall.SIGINT:
-				log.Printf("Received %s, shutting down", sig)
+				log.Printf("Received %s, shutting down gracefully", sig)
 				sched.Stop()
 				pool.KillAll()
 				cancel()
+				log.Println("Daemon stopped")
 				os.Exit(0)
 
 			case syscall.SIGHUP:

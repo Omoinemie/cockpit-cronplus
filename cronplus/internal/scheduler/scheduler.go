@@ -218,7 +218,7 @@ func (s *Scheduler) loop(ctx context.Context) {
 			if lastRun.IsZero() {
 				lastRun = now.Add(-time.Second)
 			}
-			nxt := NextRunTime(fields, lastRun)
+			nxt := NextRunTimeFromAnchor(fields, lastRun, task.CronBaseTime)
 			if !nxt.IsZero() {
 				candidates = append(candidates, candidate{at: nxt, task: task, cron: fields})
 			}

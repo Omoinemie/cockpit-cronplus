@@ -352,11 +352,6 @@
                         <input type="number" id="inputRebootDelay" value="0" min="0" max="86400" placeholder="0">
                         <span class="field-hint" data-i18n="form.rebootDelayHint">系统启动后延迟多少秒执行，0 = 立即执行</span>
                     </div>
-                    <div id="cronBaseTimeGroup" class="cron-base-time-group">
-                        <label data-i18n="form.cronBaseTime">基准日期时间</label>
-                        <input type="datetime-local" id="inputCronBaseTime" step="1">
-                        <span class="field-hint" data-i18n="form.cronBaseTimeHint">用于计算"每N"间隔的起始参考时间，如每2天、每2小时。默认为当前时间</span>
-                    </div>
                 </div>
 
                 <div class="cron-fields">
@@ -400,7 +395,9 @@
 
                 <div class="form-group" id="nextRunsGroup">
                     <label data-i18n="form.nextRuns">接下来 5 次运行时间</label>
+                    <span id="nextRunsHint" class="next-runs-hint"></span>
                     <div id="nextRuns" class="next-runs"></div>
+                    <input type="hidden" id="inputCronBaseTime">
                 </div>
 
                 <!-- Advanced settings -->

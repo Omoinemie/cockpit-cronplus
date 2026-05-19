@@ -28,25 +28,24 @@ var CronUtil = (function () {
     function describeCron(sec, min, hour, day, month, dow) {
         var parts = [];
         if (sec !== '0' && sec !== '*') {
-            if (sec.indexOf('/') >= 0) parts.push('每' + sec.split('/')[1] + '秒');
-            else parts.push('第' + sec + '秒');
+            if (sec.indexOf('/') >= 0) parts.push(I18n.t('schedule.every') + sec.split('/')[1] + I18n.t('schedule.seconds'));
+            else parts.push(I18n.t('schedule.atSec') + sec + I18n.t('schedule.secUnit'));
         }
-        if (min === '*') parts.push('每分钟');
-        else if (min.indexOf('/') >= 0) parts.push('每' + min.split('/')[1] + '分钟');
-        else parts.push('第' + min + '分钟');
+        if (min === '*') parts.push(I18n.t('schedule.everyMin'));
+        else if (min.indexOf('/') >= 0) parts.push(I18n.t('schedule.every') + min.split('/')[1] + I18n.t('schedule.minutes'));
+        else parts.push(I18n.t('schedule.atMin') + min + I18n.t('schedule.minUnit'));
         if (hour !== '*') {
-            if (hour.indexOf('/') >= 0) parts.push('每' + hour.split('/')[1] + '小时');
-            else parts.push('第' + hour + '时');
+            if (hour.indexOf('/') >= 0) parts.push(I18n.t('schedule.every') + hour.split('/')[1] + I18n.t('schedule.hours'));
+            else parts.push(I18n.t('schedule.atHour') + hour + I18n.t('schedule.hourUnit'));
         }
-        if (day !== '*') parts.push(day + '日');
-        if (month !== '*') parts.push(month + '月');
-        // BUG FIX: Added index 7 = '日' (Sunday)
-        var dn = ['日', '一', '二', '三', '四', '五', '六', '日'];
+        if (day !== '*') parts.push(day + I18n.t('schedule.dayUnit'));
+        if (month !== '*') parts.push(month + I18n.t('schedule.monthUnit'));
+        var dn = [I18n.t('dow.sun'), I18n.t('dow.mon'), I18n.t('dow.tue'), I18n.t('dow.wed'), I18n.t('dow.thu'), I18n.t('dow.fri'), I18n.t('dow.sat'), I18n.t('dow.sun')];
         if (dow !== '*') {
             if (dow.indexOf(',') >= 0) {
-                parts.push('周' + dow.split(',').map(function (d) { return dn[parseInt(d)] || d; }).join('、'));
+                parts.push(I18n.t('schedule.dowPrefix') + dow.split(',').map(function (d) { return dn[parseInt(d)] || d; }).join(I18n.t('schedule.dowSep')));
             } else {
-                parts.push('周' + (dn[parseInt(dow)] || dow));
+                parts.push(I18n.t('schedule.dowPrefix') + (dn[parseInt(dow)] || dow));
             }
         }
         return I18n.t('schedule.execute') + ': ' + parts.join(' · ');

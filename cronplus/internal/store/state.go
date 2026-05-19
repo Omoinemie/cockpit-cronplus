@@ -1,6 +1,7 @@
 package store
 
 import (
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -43,7 +44,9 @@ func (s *Store) SetTaskLastRun(taskID int, ts int64) error {
 	defer stateMu.Unlock()
 
 	var state DaemonState
-	ReadJSON(s.StatePath, &state)
+	if _, err := ReadJSON(s.StatePath, &state); err != nil {
+		log.Printf("Store: failed to read state for SetTaskLastRun: %v", err)
+	}
 	if state.TaskLastRun == nil {
 		state.TaskLastRun = map[int]int64{}
 	}
@@ -60,6 +63,6 @@ func RebootDetected() bool {
 		return false // marker exists, not a reboot
 	}
 	// Create marker
-	os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)), 0644)
+	os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)), 0600)
 	return true
 }

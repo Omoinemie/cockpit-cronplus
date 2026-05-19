@@ -154,9 +154,14 @@ func (s *Store) CleanupLogs(tasks []model.Task) error {
 			filtered = filtered[len(filtered)-rule.max:]
 		}
 		if len(filtered) != len(logs) {
-			out, _ := json.MarshalIndent(filtered, "", "  ")
+			out, err := json.MarshalIndent(filtered, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal filtered logs for task %d: %w", tid, err)
+			}
 			out = append(out, '\n')
-			atomicWrite(s.logFilePath(tid), out)
+			if err := atomicWrite(s.logFilePath(tid), out); err != nil {
+				return fmt.Errorf("write filtered logs for task %d: %w", tid, err)
+			}
 		}
 	}
 	return nil

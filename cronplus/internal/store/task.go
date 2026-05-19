@@ -46,7 +46,9 @@ func (s *Store) CreateTask(t *model.Task) error {
 	}
 
 	var tasks []model.Task
-	ReadJSON(s.ConfPath, &tasks)
+	if _, err := ReadJSON(s.ConfPath, &tasks); err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
 	if tasks == nil {
 		tasks = []model.Task{}
 	}

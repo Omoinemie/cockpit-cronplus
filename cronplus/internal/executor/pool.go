@@ -32,6 +32,7 @@ type Pool struct {
 	running  map[int]*RunningTask
 	store    *store.Store
 	maxTotal int
+	taskRunCount map[int]int
 }
 
 func NewPool(s *store.Store, maxTotal int) *Pool {
@@ -39,14 +40,22 @@ func NewPool(s *store.Store, maxTotal int) *Pool {
 		maxTotal = 50
 	}
 	return &Pool{
-		running:  make(map[int]*RunningTask),
-		store:    s,
-		maxTotal: maxTotal,
+		running:      make(map[int]*RunningTask),
+		store:        s,
+		maxTotal:     maxTotal,
+		taskRunCount: make(map[int]int),
 	}
 }
 
 // Dispatch starts executing a task in a new goroutine with a new process.
 func (p *Pool) Dispatch(task model.Task, trigger string) {
+	p.mu.RLock()
+	running := len(p.running)
+	p.mu.RUnlock()
+	if running >= p.maxTotal {
+		log.Printf("Pool: max concurrency reached (%d/%d), skipping task [%d]", running, p.maxTotal, task.ID)
+		return
+	}
 	go p.execute(task, trigger)
 }
 
@@ -181,6 +190,19 @@ func (p *Pool) execute(task model.Task, trigger string) {
 		p.mu.Lock()
 	}
 
+	// MaxConcurrent check: count how many instances of this task are running
+	maxConcurrent := task.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
+	currentCount := p.taskRunCount[taskID]
+	if currentCount >= maxConcurrent {
+		p.mu.Unlock()
+		log.Printf("Pool: task [%d] max_concurrent reached (%d/%d), skipping", taskID, currentCount, maxConcurrent)
+		return
+	}
+	p.taskRunCount[taskID] = currentCount + 1
+
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &RunningTask{
 		TaskID:    taskID,
@@ -198,6 +220,9 @@ func (p *Pool) execute(task model.Task, trigger string) {
 		if cur, ok := p.running[taskID]; ok && cur == rt {
 			delete(p.running, taskID)
 		}
+		if p.taskRunCount[taskID] > 0 {
+			p.taskRunCount[taskID]--
+		}
 		p.mu.Unlock()
 	}()
 
@@ -205,6 +230,12 @@ func (p *Pool) execute(task model.Task, trigger string) {
 	maxRetries := task.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
+	}
+
+	if task.Timeout <= 0 {
+		if settings, err := p.store.ReadSettings(); err == nil && settings.DefaultTimeout > 0 {
+			task.Timeout = settings.DefaultTimeout
+		}
 	}
 
 	taskName := task.Title
@@ -391,7 +422,7 @@ func buildEnv(envVars map[string]string) []string {
 	if len(rejected) > 0 {
 		log.Printf("[security] Blocked dangerous env vars: %v", rejected)
 	}
-	env := []string{}
+	env := os.Environ()
 	for k, v := range safe {
 		env = append(env, k+"="+v)
 	}

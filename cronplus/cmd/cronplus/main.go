@@ -480,7 +480,7 @@ func cmdExport(_ []string) int {
 	}
 	data := map[string]interface{}{
 		"version":    version,
-		"exportTime": "now",
+		"exportTime": time.Now().Format(time.RFC3339),
 		"source":     "cronplus",
 		"tasks":      tasks,
 	}

@@ -23,6 +23,7 @@ type Task struct {
 	RunSeq        int               `json:"run_seq"`         // current auto-run sequence number, resets on restart/manual
 	MaxRuns       int               `json:"max_runs"`        // max auto-run count, 0=unlimited
 	RunCount      int               `json:"run_count"`       // total auto-run count (read-only, from seq)
+	CronBaseTime  string            `json:"cron_base_time"`  // anchor for step patterns: "YYYY-MM-DD HH:mm:ss"
 }
 
 // Defaults fills unset fields with default values.

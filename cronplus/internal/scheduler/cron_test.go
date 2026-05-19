@@ -96,15 +96,18 @@ func TestNextRunTimes(t *testing.T) {
 	fmt.Printf("=== 参考时间: %s (周五) ===\n\n", ref.Format("2006-01-02 15:04:05 Mon"))
 
 	for _, tt := range tests {
-		fmt.Printf("--- %s [%s] ---\n", tt.name, tt.schedule)
-		runs := nextN(tt.fields, ref, 5)
-		for i, r := range runs {
-			fmt.Printf("  第 %d 次: %s (%s)\n", i+1, r.Format("2006-01-02 15:04:05 Mon"), r.Sub(ref).Round(time.Second))
-		}
-		if len(runs) == 0 {
-			fmt.Println("  ❌ 无匹配！调度可能有 bug")
-		}
-		fmt.Println()
+		t.Run(tt.name, func(t *testing.T) {
+			runs := nextN(tt.fields, ref, 5)
+			if len(runs) == 0 {
+				t.Errorf("schedule %q produced no results", tt.schedule)
+				return
+			}
+			for i, r := range runs {
+				if r.IsZero() {
+					t.Errorf("run %d is zero time for schedule %q", i+1, tt.schedule)
+				}
+			}
+		})
 	}
 }
 
@@ -150,4 +153,66 @@ func TestDOWBugFix(t *testing.T) {
 	}
 
 	fmt.Println()
+}
+
+func TestNextRunTimeFromAnchor(t *testing.T) {
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+
+	t.Run("every 2 days with anchor", func(t *testing.T) {
+		fields := [6]string{"0", "0", "8", "*/2", "*", "*"}
+		anchor := time.Date(2026, 5, 1, 8, 0, 0, 0, loc)
+		now := time.Date(2026, 5, 19, 14, 30, 0, 0, loc)
+
+		nxt := NextRunTimeFromAnchor(fields, now, "2026-05-01 08:00:00")
+		expected := time.Date(2026, 5, 21, 8, 0, 0, 0, loc)
+		if !nxt.Equal(expected) {
+			t.Errorf("expected %s, got %s", expected, nxt)
+		}
+
+		_ = anchor
+	})
+
+	t.Run("every 5 minutes with anchor", func(t *testing.T) {
+		fields := [6]string{"0", "*/5", "*", "*", "*", "*"}
+		now := time.Date(2026, 5, 19, 14, 37, 0, 0, loc)
+
+		nxt := NextRunTimeFromAnchor(fields, now, "2026-05-19 14:00:00")
+		expected := time.Date(2026, 5, 19, 14, 40, 0, 0, loc)
+		if !nxt.Equal(expected) {
+			t.Errorf("expected %s, got %s", expected, nxt)
+		}
+	})
+
+	t.Run("no base time falls back to standard", func(t *testing.T) {
+		fields := [6]string{"0", "*/5", "*", "*", "*", "*"}
+		now := time.Date(2026, 5, 19, 14, 37, 0, 0, loc)
+
+		nxt := NextRunTimeFromAnchor(fields, now, "")
+		stdNxt := NextRunTime(fields, now)
+		if !nxt.Equal(stdNxt) {
+			t.Errorf("expected fallback to standard, got %s vs %s", nxt, stdNxt)
+		}
+	})
+
+	t.Run("non-step pattern falls back to standard", func(t *testing.T) {
+		fields := [6]string{"0", "30", "18", "*", "*", "*"}
+		now := time.Date(2026, 5, 19, 14, 0, 0, 0, loc)
+
+		nxt := NextRunTimeFromAnchor(fields, now, "2026-05-19 08:00:00")
+		stdNxt := NextRunTime(fields, now)
+		if !nxt.Equal(stdNxt) {
+			t.Errorf("expected fallback to standard, got %s vs %s", nxt, stdNxt)
+		}
+	})
+
+	t.Run("anchor in future returns anchor", func(t *testing.T) {
+		fields := [6]string{"0", "0", "8", "*/2", "*", "*"}
+		now := time.Date(2026, 5, 19, 14, 0, 0, 0, loc)
+
+		nxt := NextRunTimeFromAnchor(fields, now, "2026-06-01 08:00:00")
+		expected := time.Date(2026, 6, 1, 8, 0, 0, 0, loc)
+		if !nxt.Equal(expected) {
+			t.Errorf("expected %s, got %s", expected, nxt)
+		}
+	})
 }

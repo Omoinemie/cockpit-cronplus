@@ -8,7 +8,7 @@ Advanced Cron Task Manager for Linux — built with Go + Cockpit WebUI.
 
 ```
 cronplusd (daemon)
-├── Scheduler    Parses cron expressions, triggers tasks
+├── Scheduler    Parses cron expressions, triggers tasks (anchor-based step interval)
 └── Executor Pool  Per-task process isolation, timeout/retry/logging
 
 cronplus (CLI)   Command-line management tool (real-time streaming output, signal forwarding)
@@ -17,12 +17,14 @@ cronplus (CLI)   Command-line management tool (real-time streaming output, signa
 ## Features
 
 - **6-field cron** with seconds support (`sec min hour day month dow`)
+- **Anchor-based step interval** — edit the first predicted run time as anchor, subsequent times calculated from anchor + interval
 - **Per-task process isolation** — each task runs in its own process group
 - **Timeout & retry** — SIGTERM → SIGKILL escalation, configurable retry with interval
 - **Run ID tracking** — every execution gets a unique ID (`YYMMDD-HHMMSS-xxxx`) for full-chain tracing
 - **Manual run** — real-time streaming output, Ctrl+C to terminate, signal forwarding to child process group
 - **Multi-user** — run tasks as any system user
-- **Cockpit WebUI** — task management, log viewer, daemon log, JSON editor, 9 languages, dark/light theme
+- **Cockpit WebUI** — task management, log viewer, daemon log, JSON editor, 9 languages, dark/light theme, SVG vector icons
+- **Security** — environment variable allowlist, atomic config writes, file permission enforcement (0600)
 
 ## Install
 
@@ -65,8 +67,10 @@ cronplus version             # Show version
 - **Task Logs** — pagination, multi-dimensional filters (task/user/trigger/status/date)
 - **Daemon Log** — live refresh, level filtering, line limit, clear log
 - **Raw Editor** — direct JSON config editing
+- **Anchor Editing** — edit the first predicted run time as anchor for step patterns (`*/N`), with auto-sync of fixed cron fields
 - **9 Languages** — 中文, English, 日本語, 한국어, Français, Deutsch, Español, Русский, Português
 - **Themes** — Dark / Light / Follow System
+- **SVG Icons** — all UI icons use vector graphics for crisp rendering at any resolution
 
 ## Task Configuration
 
@@ -109,6 +113,14 @@ Special schedules:
 @reboot             Run at system startup (supports reboot_delay)
 ```
 
+### Anchor Base Time
+
+For step patterns (`*/N`), the first predicted run time can be edited as an anchor. Subsequent run times are calculated from `anchor + N * interval`, ensuring consistent intervals across month/year boundaries.
+
+Example: `0 0 */3 * * *` (every 3 hours) — edit the first run time to `2026-05-19 08:00:00`, and subsequent runs will be at `11:00`, `14:00`, `17:00`, etc., always exactly 3 hours apart.
+
+When confirming the anchor, fixed cron fields (plain numbers like `8` in `0 0 8 */3 * *`) are automatically synced to match the edited time.
+
 ### Task Fields
 
 | Field | Type | Description |
@@ -125,11 +137,14 @@ Special schedules:
 | retry_interval | int | Retry interval in seconds |
 | max_concurrent | int | Max concurrent instances |
 | kill_previous | bool | Kill previous instance on new trigger |
+| max_runs | int | Auto-disable after N runs, 0=unlimited |
 | env_vars | map | Environment variables |
 | tags | string | Comma-separated tags |
+| comment | string | Task description |
 | log_retention_days | int | Log retention days, 0=unlimited |
 | log_max_entries | int | Max log entries per task, 0=unlimited |
 | reboot_delay | int | @reboot delay in seconds |
+| cron_base_time | string | Anchor time for step patterns, format `YYYY-MM-DD HH:mm:ss` |
 
 ## Run ID Tracking
 
@@ -207,15 +222,15 @@ cockpit-cronplus/
 │   ├── index.html
 │   ├── manifest.json
 │   ├── lang/                 i18n (9 languages)
-│   └── static/               CSS + JS
+│   └── static/               CSS + JS (SVG vector icons)
 └── cronplus/                 Go source code
     ├── cmd/
     │   ├── cronplus/         CLI entry
     │   └── cronplusd/        Daemon entry
     ├── internal/
     │   ├── executor/         Process executor (Run ID, signal forwarding)
-    │   ├── scheduler/        Cron scheduler
-    │   └── store/            File-based storage
+    │   ├── scheduler/        Cron scheduler (anchor-based step interval)
+    │   └── store/            File-based storage (atomic writes)
     ├── pkg/model/            Data models
     ├── cronplus.service      systemd unit
     ├── Makefile
@@ -236,9 +251,10 @@ bash build-deb.sh [amd64|arm64]
 
 The project includes a CI workflow (`build.yml`) that:
 - Accepts optional manual version input (reads `VERSION` file if empty)
+- Accepts optional changelog input for release notes
 - Builds for amd64 and arm64
 - Packages `.deb` files
-- Creates GitHub Release with checksums
+- Creates GitHub Release with checksums and changelog
 
 ## License
 

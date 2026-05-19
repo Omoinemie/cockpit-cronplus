@@ -297,3 +297,69 @@ func sortedKeys(m map[int]bool) []int {
 
 var rangeRe = regexp.MustCompile(`^(\d+)-(\d+)$`)
 var stepRe = regexp.MustCompile(`^(.*?)/(\d+)$`)
+
+// stepInterval extracts the step value and unit from a cron field spec.
+// Returns (interval_seconds, true) if it's a step pattern, (0, false) otherwise.
+func stepInterval(fields [6]string) (time.Duration, bool) {
+	for i, spec := range fields {
+		if m := stepRe.FindStringSubmatch(spec); m != nil {
+			step, _ := strconv.Atoi(m[2])
+			if step < 1 {
+				continue
+			}
+			base := m[1]
+			if base != "*" && !strings.Contains(base, "-") {
+				continue
+			}
+			switch i {
+			case 0:
+				return time.Duration(step) * time.Second, true
+			case 1:
+				return time.Duration(step) * time.Minute, true
+			case 2:
+				return time.Duration(step) * time.Hour, true
+			case 3:
+				return time.Duration(step) * 24 * time.Hour, true
+			case 4:
+				return time.Duration(step) * 30 * 24 * time.Hour, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// NextRunTimeFromAnchor calculates the next run time using an anchor-based
+// approach for step patterns. When a task has a CronBaseTime set and its
+// schedule contains a step pattern (*/N), the next run is computed as:
+//
+//	anchor + ceil((now - anchor) / interval) * interval
+//
+// This ensures consistent intervals regardless of month/day boundaries.
+// For non-step fields (or if the anchor is invalid), it falls back to NextRunTime.
+func NextRunTimeFromAnchor(fields [6]string, after time.Time, baseTimeStr string) time.Time {
+	if baseTimeStr == "" {
+		return NextRunTime(fields, after)
+	}
+
+	interval, hasStep := stepInterval(fields)
+	if !hasStep {
+		return NextRunTime(fields, after)
+	}
+
+	anchor, err := time.ParseInLocation("2006-01-02 15:04:05", baseTimeStr, after.Location())
+	if err != nil {
+		return NextRunTime(fields, after)
+	}
+
+	if !anchor.After(after) {
+		elapsed := after.Sub(anchor)
+		periods := elapsed / interval
+		candidate := anchor.Add(periods * interval)
+		if !candidate.After(after) {
+			candidate = anchor.Add((periods + 1) * interval)
+		}
+		return candidate
+	}
+
+	return anchor
+}

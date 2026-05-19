@@ -40,7 +40,7 @@ var Utils = (function () {
         var json = JSON.stringify(data, null, 2);
         var safePath = shellQuote(path);
         var safeDir = shellQuote(path.replace(/\/[^\/]*$/, ''));
-        var script = 'mkdir -p ' + safeDir + ' && printf %s ' + shellQuote(json) + ' | tee ' + safePath + ' > /dev/null';
+        var script = 'mkdir -p ' + safeDir + ' && printf %s ' + shellQuote(json) + ' | tee ' + safePath + ' > /dev/null && chmod 600 ' + safePath;
         return cockpit.spawn(['bash', '-c', script], { err: 'message', environ: ['LC_ALL=C'] });
     }
 
