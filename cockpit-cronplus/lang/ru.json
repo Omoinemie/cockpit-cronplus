@@ -20,6 +20,8 @@
   "btn.close": "Закрыть",
   "btn.terminate": "Завершить",
   "btn.stop": "Стоп",
+  "btn.sendInput": "Отправить",
+  "btn.stdinPlaceholder": "Ввести данные для отправки процессу…",
   "btn.copy": "Копировать",
   "btn.copyCommand": "Копировать команду",
   "btn.copyOutput": "Копировать вывод",

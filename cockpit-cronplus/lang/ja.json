@@ -20,6 +20,8 @@
   "btn.close": "閉じる",
   "btn.terminate": "中止",
   "btn.stop": "停止",
+  "btn.sendInput": "送信",
+  "btn.stdinPlaceholder": "プロセスに送信する入力…",
   "btn.copy": "コピー",
   "btn.copyCommand": "コマンドをコピー",
   "btn.copyOutput": "出力をコピー",

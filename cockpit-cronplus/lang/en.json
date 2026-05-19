@@ -20,6 +20,8 @@
   "btn.close": "Close",
   "btn.terminate": "Terminate",
   "btn.stop": "Stop",
+  "btn.sendInput": "Send",
+  "btn.stdinPlaceholder": "Type input to send to process…",
   "btn.copy": "Copy",
   "btn.copyCommand": "Copy command",
   "btn.copyOutput": "Copy output",

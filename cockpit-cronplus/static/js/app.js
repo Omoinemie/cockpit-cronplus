@@ -971,6 +971,11 @@
         outputEl.textContent = '';
         runStartTime = Date.now();
 
+        var stdinBar = $('#stdinBar');
+        if (stdinBar) stdinBar.style.display = 'flex';
+        var stdinInput = $('#stdinInput');
+        if (stdinInput) { stdinInput.value = ''; stdinInput.placeholder = I18n.t('btn.stdinPlaceholder'); setTimeout(function () { stdinInput.focus(); }, 100); }
+
         // Update UI: running state
         statusEl.className = 'terminal-status running';
         statusEl.innerHTML = '<span class="spinner-terminal"></span> <span class="run-id">' + currentRunID + '</span> <span>' + I18n.t('output.executing') + '</span> <span class="trigger-badge-manual">[manual]</span>';
@@ -1019,7 +1024,7 @@
             }
 
             proc.then(function () {
-                finishRun(task, command, 'success', '', 0);
+                finishRun(task, command, 'success', outputEl.textContent.slice(0, 50000), 0);
             }, function (err) {
                 var exitCode = err && err.exit_status ? err.exit_status : -1;
                 finishRun(task, command, 'error', outputEl.textContent.slice(0, 50000), exitCode);
@@ -1036,6 +1041,9 @@
         }
         if (runTimeoutTimer) { clearTimeout(runTimeoutTimer); runTimeoutTimer = null; }
         if (runDurationTimer) { clearInterval(runDurationTimer); runDurationTimer = null; }
+
+        var stdinBar = $('#stdinBar');
+        if (stdinBar) stdinBar.style.display = 'none';
 
         var statusEl = $('#outputStatus');
         var durationEl = $('#outputDuration');
@@ -1060,6 +1068,9 @@
         var duration = Date.now() - runStartTime;
         runningProc = null;
 
+        var stdinBar = $('#stdinBar');
+        if (stdinBar) stdinBar.style.display = 'none';
+
         var statusEl = $('#outputStatus');
         var durationEl = $('#outputDuration');
         var btn = $('#btnRunStopOutput');
@@ -1081,6 +1092,18 @@
 
         writeRunLog(task, command, status, output, duration, exitCode);
         loadLogs().then(function () { renderTasks(); });
+    }
+
+    function sendStdin() {
+        if (!runningProc) return;
+        var input = $('#stdinInput');
+        if (!input) return;
+        var text = input.value + '\n';
+        try { runningProc.input(text); } catch (e) { /* */ }
+        input.value = '';
+        var outputEl = $('#outputContent');
+        if (outputEl) outputEl.textContent += '> ' + text.replace(/\n$/, '') + '\n';
+        if (outputEl) outputEl.scrollTop = outputEl.scrollHeight;
     }
 
     function writeRunLog(task, command, status, output, durationMs, exitCode) {
@@ -1250,12 +1273,7 @@
         $('#inputTags').value = '';
         $('#inputLogDays').value = 0; $('#inputLogMax').value = 0;
         $('#inputRebootDelay').value = 0;
-        // Set default base time to current datetime
-        var now = new Date();
-        var pad = function (n) { return String(n).padStart(2, '0'); };
-        var nowStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
-                     'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
-        $('#inputCronBaseTime').value = nowStr;
+        $('#inputCronBaseTime').value = '';
         $('#rebootDelayGroup').style.display = 'none';
         $('.cron-fields').style.display = '';
         $('#inputEnvVars').value = 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -1696,6 +1714,10 @@
         }
         runningProc = null;
         runStartTime = 0;
+        var stdinBar = $('#stdinBar');
+        if (stdinBar) stdinBar.style.display = 'none';
+        var stdinInput = $('#stdinInput');
+        if (stdinInput) { stdinInput.value = ''; stdinInput.placeholder = I18n.t('btn.stdinPlaceholder'); }
         $('#outputModal').style.display = 'flex';
     }
 
@@ -1708,6 +1730,8 @@
         if (runDurationTimer) { clearInterval(runDurationTimer); runDurationTimer = null; }
         runStartTime = 0;
         pendingRunTask = null;
+        var stdinBar = $('#stdinBar');
+        if (stdinBar) stdinBar.style.display = 'none';
         $('#outputModal').style.display = 'none';
     }
 
@@ -1955,6 +1979,14 @@
                 setTimeout(function () { btn.innerHTML = origHtml; btn.title = tip; }, 1500);
             });
         });
+
+        $('#stdinInput').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendStdin();
+            }
+        });
+        $('#btnStdinSend').addEventListener('click', sendStdin);
 
         $('#btnExport').addEventListener('click', exportConfig);
         $('#btnTheme').addEventListener('click', function () {

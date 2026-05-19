@@ -20,6 +20,8 @@
   "btn.close": "关闭",
   "btn.terminate": "终止",
   "btn.stop": "停止",
+  "btn.sendInput": "发送",
+  "btn.stdinPlaceholder": "输入内容发送到进程…",
   "btn.copy": "复制",
   "btn.copyCommand": "复制命令",
   "btn.copyOutput": "复制输出",

@@ -20,6 +20,8 @@
   "btn.close": "닫기",
   "btn.terminate": "중지",
   "btn.stop": "중지",
+  "btn.sendInput": "보내기",
+  "btn.stdinPlaceholder": "프로세스에 보낼 입력…",
   "btn.copy": "복사",
   "btn.copyCommand": "명령어 복사",
   "btn.copyOutput": "출력 복사",

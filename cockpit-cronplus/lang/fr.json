@@ -20,6 +20,8 @@
   "btn.close": "Fermer",
   "btn.terminate": "Arrêter",
   "btn.stop": "Arrêter",
+  "btn.sendInput": "Envoyer",
+  "btn.stdinPlaceholder": "Saisir l'entrée à envoyer au processus…",
   "btn.copy": "Copier",
   "btn.copyCommand": "Copier la commande",
   "btn.copyOutput": "Copier la sortie",
