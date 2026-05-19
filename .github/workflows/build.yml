@@ -12,6 +12,11 @@ on:
         type: boolean
         required: true
         default: true
+      changelog:
+        description: '更新日志 (留空则自动生成)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   # ── 阶段 1: 确定版本号 ──
@@ -110,16 +115,42 @@ jobs:
           pattern: cronplus-${{ env.VERSION }}-*
           merge-multiple: true
 
+      - name: Prepare release body
+        id: body
+        run: |
+          CHANGELOG="${{ github.event.inputs.changelog }}"
+          if [ -n "$CHANGELOG" ]; then
+            {
+              echo "body<<EOFMARKER"
+              echo "## v${{ env.VERSION }}"
+              echo ""
+              echo "$CHANGELOG"
+              echo ""
+              echo "---"
+              echo ""
+              echo "### 📦 下载安装"
+              echo ""
+              echo "\`\`\`bash"
+              echo "sudo dpkg -i cronplus_${{ env.VERSION }}_amd64.deb"
+              echo "sudo dpkg -i cockpit-cronplus_${{ env.VERSION }}_amd64.deb"
+              echo "\`\`\`"
+              echo "EOFMARKER"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "body=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           name: v${{ env.VERSION }}
+          body: ${{ steps.body.outputs.body }}
           files: |
             dist/**/cronplus_*.deb
             dist/**/cockpit-cronplus_*.deb
             dist/**/SHA256SUMS
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.body.outputs.body == '' }}
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
