@@ -1,6 +1,12 @@
 # Cronplus
 
 Advanced Cron Task Manager for Linux — built with Go + Cockpit WebUI.
+<img width="2149" height="1199" alt="image" src="https://github.com/user-attachments/assets/72976321-d291-4400-a5b8-80f0fee3bc31" />
+<img width="2150" height="1197" alt="image" src="https://github.com/user-attachments/assets/beec91c9-9e50-4832-8cbc-1dc9d8111b3e" />
+<img width="2153" height="1273" alt="image" src="https://github.com/user-attachments/assets/887763d0-63cc-4e1e-a435-268f74f8f9b0" />
+<img width="2202" height="1303" alt="image" src="https://github.com/user-attachments/assets/9a5da631-fb2f-4495-90aa-9ced3fe3ebc1" />
+<img width="2183" height="1297" alt="image" src="https://github.com/user-attachments/assets/e129dee0-4d10-49bc-aa83-25e5498df5fd" />
+
 
 [中文文档](README.zh-CN.md)
 
