@@ -1106,6 +1106,26 @@
         if (outputEl) outputEl.scrollTop = outputEl.scrollHeight;
     }
 
+    // Python fallback used when jq is unavailable. Single top-level statement so it
+    // survives being passed through the shell; \n escapes become real newlines in exec().
+    var LOG_APPEND_PY = 'import json,sys,os;exec("' + [
+        'p,n=sys.argv[1],sys.argv[3]',
+        'try:',
+        ' d=json.load(open(p))',
+        'except Exception:',
+        ' d=[]',
+        'if not isinstance(d,list): d=[]',
+        'e=json.loads(sys.argv[2])',
+        "e['created_at']=n",
+        'd.append(e)',
+        'd=d[-1000:]',
+        "f=open(p+'.tmp','w')",
+        'json.dump(d,f,indent=2)',
+        'f.close()',
+        "os.chmod(p+'.tmp',0o600)",
+        "os.replace(p+'.tmp',p)"
+    ].join('\\n') + '")';
+
     function writeRunLog(task, command, status, output, durationMs, exitCode) {
         var logFile = '/opt/cronplus/logs/task_' + task.id + '.json';
         var entry = {
@@ -1120,21 +1140,27 @@
             attempt: 1,
             trigger: 'manual',
             run_user: task.run_user || 'root',
-            created_at: new Date().toISOString().replace('T', ' ').slice(0, 19)
+            // Filled in on the server so the timestamp matches the daemon's local
+            // time instead of the browser's timezone (was off by the UTC offset).
+            created_at: ''
         };
         var entryJson = JSON.stringify(entry);
         var safeLogFile = Utils.shellQuote(logFile);
-        // Use jq for safe JSON append (fallback: python3, then node)
+        // NOTE: the jq filter must stay single-quoted — inside double quotes bash
+        // expands $e and treats [$...] as arithmetic, so the entry was never appended.
+        var jqFilter = '. + [$e + {created_at: $now}] | .[-1000:]';
+        var jqCmd = 'jq --argjson e "$ENTRY" --arg now "$NOW" ' + Utils.shellQuote(jqFilter);
         var script =
             'LOG=' + safeLogFile + ' && mkdir -p "$(dirname "$LOG")" && ' +
+            'ENTRY=' + Utils.shellQuote(entryJson) + ' && ' +
+            'NOW=$(date "+%Y-%m-%d %H:%M:%S") && ' +
+            'PY=$(command -v python3 || command -v python) && ' +
             'if command -v jq >/dev/null 2>&1; then ' +
-            '  if [ -f "$LOG" ]; then ' +
-            '    jq --argjson e ' + Utils.shellQuote(entryJson) + ' ". + [$e] | .[-1000:]" "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; ' +
-            '  else ' +
-            '    echo "[" > "$LOG" && echo ' + Utils.shellQuote(entryJson) + ' >> "$LOG" && echo "]" >> "$LOG"; ' +
-            '  fi; ' +
-            'elif command -v python3 >/dev/null 2>&1; then ' +
-            '  python3 -c ' + Utils.shellQuote("import json,sys;p=sys.argv[1];e=json.loads(sys.argv[2]);d=[]\ntry:\n  f=open(p);d=json.load(f);f.close()\nexcept:pass\nif not isinstance(d,list):d=[]\nd.append(e);d=d[-1000:]\nf=open(p,'w');json.dump(d,f,indent=2);f.close()") + ' "$LOG" ' + Utils.shellQuote(entryJson) + '; ' +
+            '  if [ -s "$LOG" ]; then ' + jqCmd + ' "$LOG" > "$LOG.tmp"; ' +
+            '  else printf "[]" | ' + jqCmd + ' > "$LOG.tmp"; fi && ' +
+            '  mv -f "$LOG.tmp" "$LOG" && chmod 600 "$LOG"; ' +
+            'elif [ -n "$PY" ]; then ' +
+            '  "$PY" -c ' + Utils.shellQuote(LOG_APPEND_PY) + ' "$LOG" "$ENTRY" "$NOW"; ' +
             'fi';
         cockpit.spawn(
             ['bash', '-c', script],

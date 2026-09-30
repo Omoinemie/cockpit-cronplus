@@ -246,7 +246,7 @@ func cmdRun(args []string) int {
 			title = title[:60]
 		}
 	}
-	runID := executor.NewRunID()
+	runID := executor.NewManualRunID(taskID, task.RunUser)
 	fmt.Printf("▶ [%d] %s [manual] run=%s\n", taskID, title, runID)
 
 	// Execute command directly with real-time streaming output

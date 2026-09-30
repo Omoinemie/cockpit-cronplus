@@ -15,6 +15,25 @@ func (s *Store) logFilePath(taskID int) string {
 	return filepath.Join(s.LogDir, fmt.Sprintf("task_%d.json", taskID))
 }
 
+// decodeLogs parses a task log file. Entries that are not valid log objects are
+// skipped instead of failing the whole file, so one corrupt record cannot hide
+// the entire history of a task.
+func decodeLogs(data []byte) []model.LogEntry {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	logs := make([]model.LogEntry, 0, len(raw))
+	for _, item := range raw {
+		var e model.LogEntry
+		if err := json.Unmarshal(item, &e); err != nil {
+			continue
+		}
+		logs = append(logs, e)
+	}
+	return logs
+}
+
 // AppendLog appends a log entry to the task's log file.
 func (s *Store) AppendLog(entry model.LogEntry) error {
 	s.logMu.Lock()
@@ -22,13 +41,11 @@ func (s *Store) AppendLog(entry model.LogEntry) error {
 
 	path := s.logFilePath(entry.TaskID)
 
-	var logs []model.LogEntry
-	data, err := os.ReadFile(path)
-	if err == nil && len(data) > 0 {
-		json.Unmarshal(data, &logs)
-	}
-	if logs == nil {
-		logs = []model.LogEntry{}
+	logs := []model.LogEntry{}
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		if existing := decodeLogs(data); existing != nil {
+			logs = existing
+		}
 	}
 
 	logs = append(logs, entry)
@@ -87,12 +104,12 @@ func (s *Store) readTaskLog(taskID int) ([]model.LogEntry, error) {
 		}
 		return nil, err
 	}
-	var logs []model.LogEntry
-	if err := json.Unmarshal(data, &logs); err != nil {
-		return nil, err
+	if len(data) == 0 {
+		return []model.LogEntry{}, nil
 	}
+	logs := decodeLogs(data)
 	if logs == nil {
-		logs = []model.LogEntry{}
+		return nil, fmt.Errorf("parse log file %s: not a JSON array of log entries", path)
 	}
 	return logs, nil
 }
