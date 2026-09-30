@@ -317,6 +317,9 @@ func (p *Pool) runOnce(ctx context.Context, task model.Task, command string, att
 		outputStr = fmt.Sprintf("[cronplus] pipe error: %v", err)
 		return
 	}
+	// Merge stderr into the same pipe. Without this, cmd.Stderr defaults to
+	// /dev/null and every error a task writes is silently lost from the log.
+	cmd.Stderr = stdout
 
 	startTime := time.Now()
 	if err := cmd.Start(); err != nil {

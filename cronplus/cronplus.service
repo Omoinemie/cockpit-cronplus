@@ -10,26 +10,29 @@ Restart=on-failure
 RestartSec=5
 User=root
 
-# ── Security Hardening ──
-NoNewPrivileges=yes
-ProtectSystem=strict
-ReadWritePaths=/opt/cronplus /run
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-ProtectHome=yes
-ProtectClock=yes
-ProtectHostname=yes
-RestrictNamespaces=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-LockPersonality=yes
-SystemCallArchitectures=native
-RemoveIPC=yes
-MemoryDenyWriteExecute=yes
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_KILL CAP_DAC_OVERRIDE
-AmbientCapabilities=
+# ─────────────────────────────────────────────────────────────────────────────
+#  IMPORTANT: do not add sandboxing here.
+#
+#  cronplusd is a task runner — it execs arbitrary user-supplied commands as
+#  child processes, and those children inherit everything this unit sets:
+#
+#    * CapabilityBoundingSet  — dropping CAP_NET_RAW breaks ping; dropping
+#                               CAP_NET_ADMIN breaks ip/nmcli/iptables/wg.
+#    * ProtectSystem=strict   — makes the whole filesystem read-only for tasks.
+#    * PrivateTmp=yes         — a task writing /tmp is invisible to the host.
+#    * ProtectHome=yes        — tasks cannot read /home, /root.
+#    * NoNewPrivileges=yes    — setuid binaries stop elevating, so `su` and
+#                               tasks configured with a non-root run_user fail.
+#    * ProtectKernelTunables  — blocks the sysctl/network changes that network
+#                               management scripts exist to make.
+#
+#  All of the above produced "manual run works, scheduled run fails", because
+#  the manual run goes through cockpit.spawn (the Cockpit web server, which has
+#  no such restrictions) while the scheduled run goes through this unit.
+#
+#  Per-task isolation is already handled by the executor: each task runs in its
+#  own process group with timeout, retry, env allowlist and log capture.
+# ─────────────────────────────────────────────────────────────────────────────
 
 [Install]
 WantedBy=multi-user.target

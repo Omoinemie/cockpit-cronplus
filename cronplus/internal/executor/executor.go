@@ -18,7 +18,6 @@ var dangerousEnvVars = map[string]bool{
 	"LD_ORIGIN":          true,
 	"LD_HWCAP_MASK":      true,
 	"LDSO_PRELOAD":       true,
-	"PATH":               true, // PATH must go through SafePaths
 	"BASH_ENV":           true,
 	"ENV":                true,
 	"CDPATH":             true,
@@ -77,12 +76,44 @@ var safeEnvPrefixes = []string{
 	"TASK_",      // common task prefix
 }
 
+// ValidatePathValue checks a PATH value for injection. It must be a colon
+// separated list of absolute directories containing no shell metacharacters
+// or newlines, so it is safe to place in the task's environment.
+func ValidatePathValue(v string) bool {
+	if v == "" || len(v) > 4096 {
+		return false
+	}
+	if strings.ContainsAny(v, "\n\r\x00$`\"'\\|&;<>()*?[]{}!#~ ") {
+		return false
+	}
+	for _, dir := range strings.Split(v, ":") {
+		if dir == "" || !strings.HasPrefix(dir, "/") {
+			return false
+		}
+		if strings.Contains(dir, "..") {
+			return false
+		}
+	}
+	return true
+}
+
 // SanitizeEnvVars filters dangerous environment variables.
 // Returns the safe subset and a list of rejected keys.
 func SanitizeEnvVars(envVars map[string]string) (safe map[string]string, rejected []string) {
 	safe = make(map[string]string, len(envVars))
 	for k, v := range envVars {
 		upper := strings.ToUpper(k)
+		// PATH is allowed but validated: a task that needs extra tools in PATH
+		// must not silently lose it, which made scheduled runs behave
+		// differently from manual ones.
+		if upper == "PATH" {
+			if !ValidatePathValue(v) {
+				rejected = append(rejected, k+" (invalid PATH)")
+				continue
+			}
+			safe[k] = v
+			continue
+		}
 		if dangerousEnvVars[upper] {
 			rejected = append(rejected, k)
 			continue
