@@ -96,7 +96,10 @@ Description: Advanced Cron Task Manager
 Depends: systemd
 EOF
 
-dpkg-deb --build "$PKG" "$DIST_DIR/cronplus_${VERSION}_${ARCH}.deb"
+# --root-owner-group: 打包时强制属主为 root:root。
+# 不加的话属主取自执行打包的用户，CI runner 是非 root (runner, uid 1001)，
+# 装到机器上 /opt/cronplus 与二进制就不是 root 所有了。
+dpkg-deb --root-owner-group --build "$PKG" "$DIST_DIR/cronplus_${VERSION}_${ARCH}.deb"
 
 # ── 5. Cockpit WebUI deb 打包 ──
 echo "[2/4] Packaging cockpit-cronplus WebUI (${ARCH})..."
@@ -115,7 +118,7 @@ Description: Advanced Cron Task Manager - Cockpit UI
 Depends: cronplus (= ${VERSION}), cockpit
 EOF
 
-dpkg-deb --build "$WPKG" "$DIST_DIR/cockpit-cronplus_${VERSION}_${ARCH}.deb"
+dpkg-deb --root-owner-group --build "$WPKG" "$DIST_DIR/cockpit-cronplus_${VERSION}_${ARCH}.deb"
 
 # ── 6. 生成校验和 ──
 echo "[3/4] Generating checksums..."
