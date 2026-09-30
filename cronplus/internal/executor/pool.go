@@ -310,24 +310,35 @@ func (p *Pool) runOnce(ctx context.Context, task model.Task, command string, att
 	}
 	cmd.Env = buildEnv(task.EnvVars)
 
-	// Capture output via pipe
-	stdout, err := cmd.StdoutPipe()
+	// Merge stdout and stderr into a single stream.
+	//
+	// A single os.Pipe is required: cmd.StdoutPipe() hands back the read end
+	// (an io.ReadCloser), so it cannot be assigned to cmd.Stderr, which wants
+	// an io.Writer. Leaving cmd.Stderr nil makes os/exec send it to /dev/null,
+	// which is how every error message a task writes used to disappear from
+	// the log — the manual run path merges them, so the two paths disagreed.
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		status = "error"
 		outputStr = fmt.Sprintf("[cronplus] pipe error: %v", err)
 		return
 	}
-	// Merge stderr into the same pipe. Without this, cmd.Stderr defaults to
-	// /dev/null and every error a task writes is silently lost from the log.
-	cmd.Stderr = stdout
+	defer pr.Close()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
 
 	startTime := time.Now()
 	if err := cmd.Start(); err != nil {
+		pw.Close()
 		status = "error"
 		outputStr = fmt.Sprintf("[cronplus] start error: %v", err)
 		durationMs = int(time.Since(startTime).Milliseconds())
 		return
 	}
+
+	// The parent must drop its copy of the write end, otherwise the reader
+	// below never sees EOF and blocks until the timeout fires.
+	pw.Close()
 
 	pgid := cmd.Process.Pid
 
@@ -338,7 +349,7 @@ func (p *Pool) runOnce(ctx context.Context, task model.Task, command string, att
 	}
 	ch := make(chan readResult, 1)
 	go func() {
-		data, err := io.ReadAll(stdout)
+		data, err := io.ReadAll(pr)
 		ch <- readResult{data, err}
 	}()
 
