@@ -136,6 +136,8 @@
   "task.noMatch": "No matching tasks",
   "task.noMatchHint": "Try different keywords",
   "task.confirmDelete": "Delete this task?",
+  "task.logsWillBeDeleted": "Its run history will be deleted too.",
+
   "task.added": "Task added",
   "task.updated": "Task updated",
   "task.loadFailed": "Failed to load tasks",

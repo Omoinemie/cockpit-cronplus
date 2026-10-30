@@ -1161,16 +1161,81 @@
         loadLogs().then(function () { renderLogs(); });
     }
 
+    // ===== Terminal output writer =====
+    //
+    // Stream chunks arrive dozens to hundreds of times per second. Appending
+    // each one with `outputEl.textContent += data` re-serialised the whole
+    // buffer on every chunk — O(n²) over the run — and the following
+    // `scrollTop = scrollHeight` forced a synchronous layout each time. On a
+    // task printing thousands of lines that is what made the dialog feel
+    // several times slower than watching the same command in a terminal.
+    //
+    // Chunks are now buffered and flushed at most ~20 times per second into a
+    // single text node (appendData is O(chunk), not O(buffer)), and the scroll
+    // is adjusted once per flush — and only when the user is already at the
+    // bottom, so scrolling back through the output no longer fights the stream.
+    var OUTPUT_FLUSH_MS = 50;
+    var OUTPUT_MAX_CHARS = 8 * 1024 * 1024;
+    var OUTPUT_TRIM_MARK = '\n… [output trimmed: earlier lines dropped from this view] …\n\n';
+    var outputWriter = null;
+
+    function createOutputWriter(el, initialText) {
+        el.textContent = '';
+        var node = document.createTextNode(initialText || '');
+        el.appendChild(node);
+        var pending = '';
+        var timer = null;
+        var trimmed = false;
+
+        function flush() {
+            if (timer) { clearTimeout(timer); timer = null; }
+            if (!pending) return;
+            // Read the scroll position before mutating: appending changes
+            // scrollHeight, and we want to know whether the user was following.
+            var follow = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+            node.appendData(pending);
+            pending = '';
+            if (node.length > OUTPUT_MAX_CHARS) {
+                node.deleteData(0, node.length - OUTPUT_MAX_CHARS);
+                if (node.substringData(0, OUTPUT_TRIM_MARK.length) !== OUTPUT_TRIM_MARK) {
+                    trimmed = true;
+                    node.insertData(0, OUTPUT_TRIM_MARK);
+                }
+            }
+            if (follow) el.scrollTop = el.scrollHeight;
+        }
+
+        return {
+            append: function (data) {
+                if (!data) return;
+                pending += data;
+                if (!timer) timer = setTimeout(flush, OUTPUT_FLUSH_MS);
+            },
+            flush: flush,
+            text: function () { return node.data; },
+            isTrimmed: function () { return trimmed; }
+        };
+    }
+
+    // (Re)initialise the writer for a fresh run or for the command preview.
+    function resetOutputWriter(initialText) {
+        var el = $('#outputContent');
+        if (outputWriter) { try { outputWriter.flush(); } catch (e) { /* */ } }
+        outputWriter = createOutputWriter(el, initialText);
+        return outputWriter;
+    }
+
     function startRunOutput() {
         var task = pendingRunTask;
         if (!task) return;
 
-        var outputEl = $('#outputContent');
         var statusEl = $('#outputStatus');
         var durationEl = $('#outputDuration');
         var btn = $('#btnRunStopOutput');
 
-        outputEl.textContent = '';
+        // Captured per run: a run that is superseded or whose dialog was closed
+        // must not write into the next run's buffer.
+        var out = resetOutputWriter('');
         // One object per run: its start stamp and whether the user stopped it.
         // Closures capture it, so a run that finishes after the modal was closed
         // (or after another run started) still reports its own duration.
@@ -1228,14 +1293,17 @@
                         if (idEl) idEl.textContent = m[1];
                     }
                 }
-                outputEl.textContent += data;
-                outputEl.scrollTop = outputEl.scrollHeight;
+                out.append(data);
             });
 
             // Single exit path. Timeout and cancellation are handled inside the
             // CLI (same executor as the daemon), so there is no second timer
             // here racing against it.
             function settle(ok, err) {
+                // Flush the tail before the status line switches to "done":
+                // the buffer is up to 50 ms behind, and the last lines are
+                // exactly the ones a user looks for.
+                out.flush();
                 var elapsed = Date.now() - thisRun.startedAt;
                 var status = ok ? 'success' : 'error';
                 var exitCode = ok ? 0 : (err && typeof err.exit_status === 'number' ? err.exit_status : -1);
@@ -1333,9 +1401,12 @@
         var text = input.value + '\n';
         try { runningProc.input(text); } catch (e) { /* */ }
         input.value = '';
-        var outputEl = $('#outputContent');
-        if (outputEl) outputEl.textContent += '> ' + text.replace(/\n$/, '') + '\n';
-        if (outputEl) outputEl.scrollTop = outputEl.scrollHeight;
+        // Echo through the same buffer as the process output so the echo keeps
+        // its place in the log instead of jumping ahead of unflushed chunks.
+        if (outputWriter) {
+            outputWriter.append('> ' + text.replace(/\n$/, '') + '\n');
+            outputWriter.flush();
+        }
     }
 
     function showTaskLogs(index) {
@@ -1370,12 +1441,42 @@
         renderTasks();
     }
 
-    function deleteTask(index) {
+    async function deleteTask(index) {
         var task = tasks[index];
-        if (!confirm(I18n.t('task.confirmDelete') + '\n' + (task.title ? task.title + ': ' : '') + task.command)) return;
+        if (!task) return;
+        if (!confirm(I18n.t('task.confirmDelete') + '\n' + I18n.t('task.logsWillBeDeleted') + '\n' + (task.title ? task.title + ': ' : '') + task.command)) return;
+
+        // Stop a running instance first: the daemon writes the log entry when
+        // the run ends, so clearing the log before it exits would just have the
+        // file written again with the now-orphaned task's entry.
+        if (task.id && runningTasks[task.id]) {
+            try {
+                await cockpit.spawn(
+                    ['cronplus', 'stop', String(task.id)],
+                    { err: 'message', environ: ['LC_ALL=C'] }
+                );
+            } catch (e) { /* stop is best-effort */ }
+        }
+
         tasks.splice(index, 1);
-        saveTasks();
+        await saveTasks();
+        // The UI rewrites the whole tasks.conf, so nothing on the daemon side
+        // ever sees a per-task delete. Drop the task's log file (and its rotated
+        // segments) explicitly, otherwise the history outlives the task and —
+        // because a new task reuses the freed ID — shows up under the wrong task.
+        if (task.id) {
+            try {
+                await cockpit.spawn(
+                    ['cronplus', 'clear-logs', String(task.id)],
+                    { err: 'message', environ: ['LC_ALL=C'] }
+                );
+            } catch (e) { /* log cleanup is best-effort */ }
+            logs = logs.filter(function (l) { return String(l.task_id) !== String(task.id); });
+            if (String(logFilterTaskId) === String(task.id)) logFilterTaskId = '';
+            delete runningTasks[task.id];
+        }
         renderTasks();
+        renderLogs();
     }
 
     function editTask(index) {
@@ -1877,7 +1978,6 @@
     function showModal(show) { $('#taskModal').style.display = show ? 'flex' : 'none'; }
 
     function showOutputModal(command, user) {
-        var outputEl = $('#outputContent');
         var statusEl = $('#outputStatus');
         var durationEl = $('#outputDuration');
         var btn = $('#btnRunStopOutput');
@@ -1888,7 +1988,7 @@
         // its banner. Inventing one here meant the id in the header never matched
         // the id in the log entry.
         currentRunID = null;
-        outputEl.textContent = '$ ' + command + '\n';
+        resetOutputWriter('$ ' + command + '\n');
         statusEl.className = 'terminal-status';
         statusEl.innerHTML = '<span class="trigger-badge-manual">[manual]</span> <span>' + Utils.escHtml(user || 'root') + '</span>';
         durationEl.textContent = '';
@@ -1919,6 +2019,9 @@
             runningProc = null;
         }
         if (runDurationTimer) { clearInterval(runDurationTimer); runDurationTimer = null; }
+        // Drop any buffered output and cancel its timer: a flush scheduled for
+        // after the dialog is gone would otherwise fire against a detached node.
+        if (outputWriter) { try { outputWriter.flush(); } catch (e) { /* */ } outputWriter = null; }
         pendingRunTask = null;
         var stdinBar = $('#stdinBar');
         if (stdinBar) stdinBar.style.display = 'none';
@@ -2187,6 +2290,9 @@
             }
         });
         $('#btnCopyOutput').addEventListener('click', function () {
+            // The writer buffers up to 50 ms of output; flush it so the copy
+            // includes the newest lines instead of stopping just short.
+            if (outputWriter) outputWriter.flush();
             var outputEl = $('#outputContent');
             var text = outputEl.textContent || '';
             var btn = $('#btnCopyOutput');

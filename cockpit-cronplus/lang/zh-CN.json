@@ -136,6 +136,8 @@
   "task.noMatch": "未找到匹配任务",
   "task.noMatchHint": "尝试其他关键词",
   "task.confirmDelete": "确定删除任务？",
+  "task.logsWillBeDeleted": "该任务的执行日志也会一并删除。",
+
   "task.added": "任务已添加",
   "task.updated": "任务已更新",
   "task.loadFailed": "加载任务失败",

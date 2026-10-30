@@ -111,6 +111,8 @@
   "task.noMatch": "一致するタスクがありません",
   "task.noMatchHint": "別のキーワードをお試しください",
   "task.confirmDelete": "このタスクを削除しますか？",
+  "task.logsWillBeDeleted": "このタスクの実行履歴も削除されます。",
+
   "task.added": "タスクを追加しました",
   "task.updated": "タスクを更新しました",
   "task.loadFailed": "タスクの読み込みに失敗しました",

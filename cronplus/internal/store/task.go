@@ -89,7 +89,13 @@ func (s *Store) UpdateTask(id int, t *model.Task) error {
 	return fmt.Errorf("task %d not found", id)
 }
 
-// DeleteTask removes a task by ID.
+// DeleteTask removes a task and its execution history.
+//
+// Dropping only the config entry left task_N.json (and its rotated segments)
+// on disk. The log view kept listing runs of a task that no longer existed,
+// and because IDs are handed out as max+1, the next task created after
+// deleting the highest-ID task reused that ID and inherited the deleted
+// task's history.
 func (s *Store) DeleteTask(id int) error {
 	s.taskMu.Lock()
 	defer s.taskMu.Unlock()
@@ -110,7 +116,11 @@ func (s *Store) DeleteTask(id int) error {
 	if !found {
 		return fmt.Errorf("task %d not found", id)
 	}
-	return writeJSON(s.ConfPath, filtered)
+	if err := writeJSON(s.ConfPath, filtered); err != nil {
+		return err
+	}
+	// Lock order is taskMu -> logMu everywhere, so taking logMu here is safe.
+	return s.ClearLogs(id)
 }
 
 // UpdateTaskRunSeq updates just the run_seq field of a task (atomic partial update).

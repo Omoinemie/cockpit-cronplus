@@ -111,6 +111,8 @@
   "task.noMatch": "Aucune tâche correspondante",
   "task.noMatchHint": "Essayez d'autres mots-clés",
   "task.confirmDelete": "Supprimer cette tâche ?",
+  "task.logsWillBeDeleted": "Son historique d'exécution sera également supprimé.",
+
   "task.added": "Tâche ajoutée",
   "task.updated": "Tâche mise à jour",
   "task.loadFailed": "Échec du chargement",

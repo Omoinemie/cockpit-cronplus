@@ -111,6 +111,8 @@
   "task.noMatch": "Sin tareas coincidentes",
   "task.noMatchHint": "Intente con otras palabras clave",
   "task.confirmDelete": "¿Eliminar esta tarea?",
+  "task.logsWillBeDeleted": "También se eliminará su historial de ejecuciones.",
+
   "task.added": "Tarea agregada",
   "task.updated": "Tarea actualizada",
   "task.loadFailed": "Error al cargar",

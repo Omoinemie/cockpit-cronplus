@@ -111,6 +111,8 @@
   "task.noMatch": "Keine passenden Aufgaben",
   "task.noMatchHint": "Versuchen Sie andere Suchbegriffe",
   "task.confirmDelete": "Aufgabe löschen?",
+  "task.logsWillBeDeleted": "Der Ausführungsverlauf wird ebenfalls gelöscht.",
+
   "task.added": "Aufgabe hinzugefügt",
   "task.updated": "Aufgabe aktualisiert",
   "task.loadFailed": "Laden fehlgeschlagen",

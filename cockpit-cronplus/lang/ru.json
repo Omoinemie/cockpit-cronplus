@@ -111,6 +111,8 @@
   "task.noMatch": "Нет подходящих задач",
   "task.noMatchHint": "Попробуйте другие ключевые слова",
   "task.confirmDelete": "Удалить эту задачу?",
+  "task.logsWillBeDeleted": "История выполнения также будет удалена.",
+
   "task.added": "Задача добавлена",
   "task.updated": "Задача обновлена",
   "task.loadFailed": "Ошибка загрузки",

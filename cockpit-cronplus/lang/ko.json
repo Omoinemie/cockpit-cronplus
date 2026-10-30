@@ -111,6 +111,8 @@
   "task.noMatch": "일치하는 작업이 없습니다",
   "task.noMatchHint": "다른 키워드를 시도하세요",
   "task.confirmDelete": "이 작업을 삭제하시겠습니까?",
+  "task.logsWillBeDeleted": "이 작업의 실행 기록도 함께 삭제됩니다.",
+
   "task.added": "작업이 추가되었습니다",
   "task.updated": "작업이 업데이트되었습니다",
   "task.loadFailed": "작업 로드 실패",

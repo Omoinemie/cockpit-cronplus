@@ -617,9 +617,49 @@ body {
 .next-runs .special-note { color: var(--text-muted); font-style: italic; padding: 8px 12px; }
 
 /* ===== Output Modal (Terminal Style) ===== */
+
+/* The dialog is a fixed-height flex column: header, toolbar and footer keep
+   their size and only the <pre> scrolls.
+   Before this, both .modal-body (max-height:75vh; overflow-y:auto) and
+   .terminal-output (max-height:75vh; overflow-y:auto) were scroll containers,
+   so a tall first screen produced two nested scrollbars. The <pre> also grew
+   the dialog with its content, because .modal had no height limit of its own
+   and its height (header + 75vh body + footer) overflowed short viewports,
+   pushing the footer buttons off-screen. */
+#outputModal .modal {
+    display: flex; flex-direction: column;
+    /* A fixed height, not max-height: the dialog must not grow with the output
+       (that is what "撑开" was), and it must still fit short viewports. */
+    height: min(620px, calc(100vh - 40px));
+    overflow: hidden;
+}
+#outputModal .modal-header,
+#outputModal .modal-footer { flex: 0 0 auto; }
+#outputModal .modal-body {
+    flex: 1 1 auto; min-height: 0;
+    max-height: none; overflow: hidden;
+    display: flex;
+}
+
 .terminal-container {
     background: #0d1117; border-radius: 0 0 var(--radius-lg) var(--radius-lg);
     overflow: hidden;
+}
+/* The only scroll container in the dialog. */
+#outputModal .terminal-container {
+    display: flex; flex-direction: column;
+    flex: 1 1 auto; min-height: 0;
+    width: 100%; height: 100%;
+}
+#outputModal .terminal-toolbar,
+#outputModal .stdin-bar { flex: 0 0 auto; }
+#outputModal .terminal-output-wrap {
+    flex: 1 1 auto; min-height: 0;
+    display: flex;
+}
+#outputModal .terminal-output {
+    flex: 1 1 auto; min-height: 0; max-height: none;
+    width: 100%; height: 100%;
 }
 .terminal-toolbar {
     display: flex; align-items: center; justify-content: space-between;
