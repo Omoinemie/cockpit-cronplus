@@ -113,6 +113,14 @@
   "task.confirmDelete": "Excluir esta tarefa?",
   "task.logsWillBeDeleted": "O histórico de execuções também será excluído.",
 
+
+  "common.confirm": "Confirmar",
+  "confirm.deleteTaskTitle": "Excluir tarefa",
+  "confirm.cleanupTitle": "Limpar registros",
+  "confirm.resetTitle": "Restaurar configurações padrão",
+  "confirm.clearLogTitle": "Limpar log do serviço",
+  "confirm.taskName": "Tarefa",
+  "confirm.command": "Comando",
   "task.added": "Tarefa adicionada",
   "task.updated": "Tarefa atualizada",
   "task.loadFailed": "Falha ao carregar",

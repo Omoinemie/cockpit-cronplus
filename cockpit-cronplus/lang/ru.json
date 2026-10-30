@@ -113,6 +113,14 @@
   "task.confirmDelete": "Удалить эту задачу?",
   "task.logsWillBeDeleted": "История выполнения также будет удалена.",
 
+
+  "common.confirm": "Подтвердить",
+  "confirm.deleteTaskTitle": "Удалить задачу",
+  "confirm.cleanupTitle": "Очистить журналы",
+  "confirm.resetTitle": "Сбросить настройки",
+  "confirm.clearLogTitle": "Очистить журнал службы",
+  "confirm.taskName": "Задача",
+  "confirm.command": "Команда",
   "task.added": "Задача добавлена",
   "task.updated": "Задача обновлена",
   "task.loadFailed": "Ошибка загрузки",

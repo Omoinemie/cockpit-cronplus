@@ -113,6 +113,14 @@
   "task.confirmDelete": "¿Eliminar esta tarea?",
   "task.logsWillBeDeleted": "También se eliminará su historial de ejecuciones.",
 
+
+  "common.confirm": "Confirmar",
+  "confirm.deleteTaskTitle": "Eliminar tarea",
+  "confirm.cleanupTitle": "Limpiar registros",
+  "confirm.resetTitle": "Restablecer configuración",
+  "confirm.clearLogTitle": "Borrar registro del servicio",
+  "confirm.taskName": "Tarea",
+  "confirm.command": "Comando",
   "task.added": "Tarea agregada",
   "task.updated": "Tarea actualizada",
   "task.loadFailed": "Error al cargar",

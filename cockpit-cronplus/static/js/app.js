@@ -261,7 +261,13 @@
     }
 
     async function handleResetSettings() {
-        if (!confirm(I18n.t('settings.resetConfirm'))) return;
+        var ok = await confirmDialog({
+            title: I18n.t('confirm.resetTitle'),
+            message: I18n.t('settings.resetConfirm'),
+            confirmText: I18n.t('btn.reset'),
+            danger: true
+        });
+        if (!ok) return;
         try {
             await saveSettings(Object.assign({}, SETTINGS_DEFAULTS));
             openSettingsModal();  // Refresh the form
@@ -1444,7 +1450,32 @@
     async function deleteTask(index) {
         var task = tasks[index];
         if (!task) return;
-        if (!confirm(I18n.t('task.confirmDelete') + '\n' + I18n.t('task.logsWillBeDeleted') + '\n' + (task.title ? task.title + ': ' : '') + task.command)) return;
+        var taskId = task.id;
+        var ok = await confirmDialog({
+            title: I18n.t('confirm.deleteTaskTitle'),
+            message: I18n.t('task.confirmDelete'),
+            details: [
+                task.title ? { label: I18n.t('confirm.taskName'), value: task.title, mono: false } : null,
+                { label: I18n.t('confirm.command'), value: task.command }
+            ],
+            note: I18n.t('task.logsWillBeDeleted'),
+            confirmText: I18n.t('btn.delete'),
+            danger: true
+        });
+        if (!ok) return;
+
+        // The dialog is asynchronous, so the list may have been reloaded while
+        // it was open. Resolve the task again by id rather than trusting the
+        // index captured before the await, which could now name a neighbour.
+        if (taskId) {
+            var found = -1;
+            for (var i = 0; i < tasks.length; i++) {
+                if (String(tasks[i].id) === String(taskId)) { found = i; break; }
+            }
+            if (found < 0) return;
+            index = found;
+            task = tasks[index];
+        }
 
         // Stop a running instance first: the daemon writes the log entry when
         // the run ends, so clearing the log before it exits would just have the
@@ -2028,6 +2059,129 @@
         $('#outputModal').style.display = 'none';
     }
 
+    // ===== Confirmation dialog =====
+    // window.confirm() is drawn by the browser, ignores the theme, and blocks
+    // the page — so a run that finishes while it is open cannot repaint, and
+    // Cockpit's own dialogs cannot be styled to match. This returns a promise
+    // instead, which lets call sites keep reading as `if (!(await ...)) return`.
+    var confirmState = null;
+
+    var CONFIRM_ICON_ASK =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+        '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>' +
+        '<line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+    var CONFIRM_ICON_DANGER =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+        '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' +
+        '<line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+
+    // opts: { title, message, details: [{label, value, mono}], note,
+    //         confirmText, cancelText, danger }
+    // Resolves true only when the user confirms; Esc, the overlay and the
+    // cancel button all resolve false.
+    function confirmDialog(opts) {
+        opts = opts || {};
+        return new Promise(function (resolve) {
+            // Only one dialog at a time: an older pending one counts as cancelled.
+            if (confirmState) confirmState.cancel();
+
+            var overlay = $('#confirmModal');
+            var iconEl = $('#confirmIcon');
+            var detailsEl = $('#confirmDetails');
+            var noteEl = $('#confirmNote');
+            var okBtn = $('#btnConfirmOk');
+            var cancelBtn = $('#btnConfirmCancel');
+            var closeBtn = $('#btnConfirmClose');
+            var danger = !!opts.danger;
+
+            iconEl.className = 'confirm-icon' + (danger ? ' danger' : '');
+            iconEl.innerHTML = danger ? CONFIRM_ICON_DANGER : CONFIRM_ICON_ASK;
+            $('#confirmTitle').textContent = opts.title || '';
+            $('#confirmMessage').textContent = opts.message || '';
+
+            detailsEl.innerHTML = '';
+            var rows = opts.details || [];
+            for (var i = 0; i < rows.length; i++) {
+                if (!rows[i]) continue;
+                var row = document.createElement('div');
+                row.className = 'confirm-row';
+                var label = document.createElement('span');
+                label.className = 'confirm-row-label';
+                label.textContent = rows[i].label || '';
+                var value = document.createElement('span');
+                value.className = 'confirm-row-value' + (rows[i].mono === false ? ' plain' : '');
+                // textContent, never innerHTML: a task command may contain markup.
+                value.textContent = rows[i].value || '';
+                row.appendChild(label);
+                row.appendChild(value);
+                detailsEl.appendChild(row);
+            }
+            detailsEl.style.display = detailsEl.children.length ? '' : 'none';
+
+            if (opts.note) {
+                $('#confirmNoteText').textContent = opts.note;
+                noteEl.className = 'confirm-note' + (danger ? '' : ' warn');
+                noteEl.style.display = '';
+            } else {
+                noteEl.style.display = 'none';
+            }
+
+            okBtn.textContent = opts.confirmText || I18n.t('common.confirm');
+            cancelBtn.textContent = opts.cancelText || I18n.t('btn.cancel');
+            okBtn.className = 'btn ' + (danger ? 'btn-danger-solid' : 'btn-primary');
+
+            var prevFocus = document.activeElement;
+            overlay.style.display = 'flex';
+            // A destructive action focuses the dialog itself, not a button: a
+            // stray Enter then does nothing, and no button looks preselected.
+            try { (danger ? overlay.querySelector('.confirm-modal') : okBtn).focus(); } catch (e) { /* */ }
+
+            function finish(result) {
+                if (!confirmState) return;
+                confirmState = null;
+                overlay.style.display = 'none';
+                document.removeEventListener('keydown', onKey, true);
+                overlay.removeEventListener('click', onOverlayClick);
+                okBtn.removeEventListener('click', onOk);
+                cancelBtn.removeEventListener('click', onCancel);
+                closeBtn.removeEventListener('click', onCancel);
+                if (prevFocus && prevFocus.focus) { try { prevFocus.focus(); } catch (e) { /* */ } }
+                resolve(result);
+            }
+            function onOk() { finish(true); }
+            function onCancel() { finish(false); }
+            function onOverlayClick(e) { if (e.target === overlay) finish(false); }
+            function onKey(e) {
+                if (e.key === 'Escape') {
+                    // Capture phase + stopPropagation: the global Escape handler
+                    // must not also close the dialog underneath this one.
+                    e.preventDefault();
+                    e.stopPropagation();
+                    finish(false);
+                    return;
+                }
+                if (e.key === 'Tab') {
+                    // Keep the cycle inside the dialog: close -> cancel -> confirm.
+                    // A focus still on the dialog container is left to the browser,
+                    // which moves it to the first control (the close button).
+                    var order = [closeBtn, cancelBtn, okBtn];
+                    var at = order.indexOf(document.activeElement);
+                    if (at < 0) return;
+                    e.preventDefault();
+                    order[(at + (e.shiftKey ? order.length - 1 : 1)) % order.length].focus();
+                }
+            }
+
+            document.addEventListener('keydown', onKey, true);
+            overlay.addEventListener('click', onOverlayClick);
+            okBtn.addEventListener('click', onOk);
+            cancelBtn.addEventListener('click', onCancel);
+            closeBtn.addEventListener('click', onCancel);
+
+            confirmState = { cancel: function () { finish(false); } };
+        });
+    }
+
     function showToast(message, type) {
         var container = $('#toastContainer');
         var toast = document.createElement('div');
@@ -2154,7 +2308,13 @@
         var mode = getCleanupMode();
 
         if (mode === 'all') {
-            if (!confirm(I18n.t('toast.cleanupConfirm', { count: logs.length }))) return;
+            var okAll = await confirmDialog({
+                title: I18n.t('confirm.cleanupTitle'),
+                message: I18n.t('toast.cleanupConfirm', { count: logs.length }),
+                confirmText: I18n.t('btn.confirmCleanup'),
+                danger: true
+            });
+            if (!okAll) return;
             try {
                 await cockpit.spawn(['cronplus', 'clear-logs'], { err: 'message', environ: ['LC_ALL=C'] });
                 logs = [];
@@ -2183,7 +2343,12 @@
             showToast(I18n.t('toast.noCleanup'), 'info');
             return;
         }
-        if (!confirm(I18n.t('toast.cleanupConfirm', { count: planned === null ? '?' : planned }))) return;
+        if (!(await confirmDialog({
+            title: I18n.t('confirm.cleanupTitle'),
+            message: I18n.t('toast.cleanupConfirm', { count: planned === null ? '?' : planned }),
+            confirmText: I18n.t('btn.confirmCleanup'),
+            danger: true
+        }))) return;
 
         try {
             var raw = await cockpit.spawn(args.concat(['--json']), { err: 'message', environ: ['LC_ALL=C'] });
@@ -2341,8 +2506,14 @@
 
         // Daemon log controls
         $('#btnDaemonRefresh').addEventListener('click', loadDaemonLog);
-        $('#btnDaemonClearFile').addEventListener('click', function () {
-            if (!confirm(I18n.t('daemon.clearLogConfirm'))) return;
+        $('#btnDaemonClearFile').addEventListener('click', async function () {
+            var ok = await confirmDialog({
+                title: I18n.t('confirm.clearLogTitle'),
+                message: I18n.t('daemon.clearLogConfirm'),
+                confirmText: I18n.t('btn.cleanupLogs'),
+                danger: true
+            });
+            if (!ok) return;
             cockpit.spawn(
                 ['bash', '-c', '> ' + Utils.shellQuote(DAEMON_LOG_FILE) + ' && echo cleared'],
                 { err: 'message', environ: ['LC_ALL=C'] }

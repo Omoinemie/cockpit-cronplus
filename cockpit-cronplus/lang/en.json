@@ -138,6 +138,14 @@
   "task.confirmDelete": "Delete this task?",
   "task.logsWillBeDeleted": "Its run history will be deleted too.",
 
+
+  "common.confirm": "Confirm",
+  "confirm.deleteTaskTitle": "Delete task",
+  "confirm.cleanupTitle": "Clean up logs",
+  "confirm.resetTitle": "Reset settings",
+  "confirm.clearLogTitle": "Clear service log",
+  "confirm.taskName": "Task",
+  "confirm.command": "Command",
   "task.added": "Task added",
   "task.updated": "Task updated",
   "task.loadFailed": "Failed to load tasks",

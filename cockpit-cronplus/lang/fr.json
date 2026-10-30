@@ -113,6 +113,14 @@
   "task.confirmDelete": "Supprimer cette tâche ?",
   "task.logsWillBeDeleted": "Son historique d'exécution sera également supprimé.",
 
+
+  "common.confirm": "Confirmer",
+  "confirm.deleteTaskTitle": "Supprimer la tâche",
+  "confirm.cleanupTitle": "Nettoyer les journaux",
+  "confirm.resetTitle": "Réinitialiser les paramètres",
+  "confirm.clearLogTitle": "Effacer le journal du service",
+  "confirm.taskName": "Tâche",
+  "confirm.command": "Commande",
   "task.added": "Tâche ajoutée",
   "task.updated": "Tâche mise à jour",
   "task.loadFailed": "Échec du chargement",

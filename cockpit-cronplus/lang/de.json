@@ -113,6 +113,14 @@
   "task.confirmDelete": "Aufgabe löschen?",
   "task.logsWillBeDeleted": "Der Ausführungsverlauf wird ebenfalls gelöscht.",
 
+
+  "common.confirm": "Bestätigen",
+  "confirm.deleteTaskTitle": "Aufgabe löschen",
+  "confirm.cleanupTitle": "Protokolle bereinigen",
+  "confirm.resetTitle": "Einstellungen zurücksetzen",
+  "confirm.clearLogTitle": "Dienstprotokoll löschen",
+  "confirm.taskName": "Aufgabe",
+  "confirm.command": "Befehl",
   "task.added": "Aufgabe hinzugefügt",
   "task.updated": "Aufgabe aktualisiert",
   "task.loadFailed": "Laden fehlgeschlagen",

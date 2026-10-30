@@ -138,6 +138,14 @@
   "task.confirmDelete": "确定删除任务？",
   "task.logsWillBeDeleted": "该任务的执行日志也会一并删除。",
 
+
+  "common.confirm": "确认",
+  "confirm.deleteTaskTitle": "删除任务",
+  "confirm.cleanupTitle": "清理日志",
+  "confirm.resetTitle": "恢复默认设置",
+  "confirm.clearLogTitle": "清理服务日志",
+  "confirm.taskName": "任务",
+  "confirm.command": "命令",
   "task.added": "任务已添加",
   "task.updated": "任务已更新",
   "task.loadFailed": "加载任务失败",

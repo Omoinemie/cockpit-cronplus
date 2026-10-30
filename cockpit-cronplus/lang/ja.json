@@ -113,6 +113,14 @@
   "task.confirmDelete": "このタスクを削除しますか？",
   "task.logsWillBeDeleted": "このタスクの実行履歴も削除されます。",
 
+
+  "common.confirm": "確認",
+  "confirm.deleteTaskTitle": "タスクを削除",
+  "confirm.cleanupTitle": "ログを整理",
+  "confirm.resetTitle": "設定を初期化",
+  "confirm.clearLogTitle": "サービスログを消去",
+  "confirm.taskName": "タスク",
+  "confirm.command": "コマンド",
   "task.added": "タスクを追加しました",
   "task.updated": "タスクを更新しました",
   "task.loadFailed": "タスクの読み込みに失敗しました",

@@ -548,6 +548,44 @@ body {
 .modal-body { padding: 24px; max-height: 75vh; overflow-y: auto; overflow-x: hidden; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--border); }
 
+/* ===== Confirmation Dialog (in-app replacement for window.confirm) ===== */
+.confirm-modal { max-width: 470px; }
+.confirm-modal:focus { outline: none; }
+.confirm-icon { display: inline-flex; flex-shrink: 0; color: var(--accent); }
+.confirm-icon.danger { color: var(--error); }
+/* .modal-header h2 svg sets an explicit accent colour, which would otherwise
+   win over the inherited one and keep the warning icon blue. */
+#confirmModal .confirm-icon svg { width: 18px; height: 18px; color: currentColor; }
+.confirm-body { padding: 20px 24px 4px; max-height: 60vh; overflow-y: auto; overflow-x: hidden; }
+.confirm-message { font-size: 14px; line-height: 1.65; color: var(--text-primary); word-break: break-word; }
+.confirm-details {
+    margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg-tertiary); overflow: hidden;
+}
+.confirm-row { display: flex; gap: 12px; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.confirm-row:last-child { border-bottom: none; }
+.confirm-row-label { flex: 0 0 auto; min-width: 48px; color: var(--text-muted); }
+.confirm-row-value {
+    flex: 1 1 auto; min-width: 0; color: var(--text-secondary);
+    font-family: var(--font-mono); white-space: pre-wrap; word-break: break-all;
+}
+.confirm-row-value.plain { font-family: var(--font); }
+.confirm-note {
+    display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; padding: 10px 12px;
+    border-radius: var(--radius); font-size: 12.5px; line-height: 1.6;
+    background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.25); color: #fca5a5;
+}
+.confirm-note svg { flex: 0 0 auto; margin-top: 2px; }
+.confirm-note.warn { background: rgba(251,191,36,0.08); border-color: rgba(251,191,36,0.25); color: #fbbf24; }
+/* The note colours above are tuned for the dark palette; on the light one that
+   red is unreadable, so darken text and tints for [data-theme="light"]. */
+[data-theme="light"] .confirm-note { background: rgba(220,38,38,0.06); border-color: rgba(220,38,38,0.25); color: #b91c1c; }
+[data-theme="light"] .confirm-note.warn { background: rgba(180,83,9,0.07); border-color: rgba(180,83,9,0.25); color: #b45309; }
+/* Solid red: white on --error (#f87171) is only ~2.7:1 in the dark palette. */
+.btn-danger-solid { background: #dc2626; border-color: #dc2626; color: #fff; font-weight: 500; }
+.btn-danger-solid:hover { background: #b91c1c; border-color: #b91c1c; }
+#confirmModal .btn:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+
 /* ===== Form ===== */
 .form-group { margin-bottom: 20px; max-width: 100%; overflow: hidden; }
 .form-group label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
