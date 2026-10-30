@@ -38,33 +38,49 @@ sudo dpkg -i cockpit-cronplus_<version>_<arch>.deb
 ## CLI 使用
 
 ```bash
-cronplus status              # 查看状态
+cronplus status              # 查看状态（含正在运行的任务）
 cronplus list                # 列出任务
+cronplus ps [--json]         # 查看正在运行的任务（来自守护进程控制 socket）
 cronplus run <id>            # 手动执行（实时输出，Ctrl+C 可终止）
-cronplus logs [id] [-n 20]   # 查看日志
+cronplus stop <id>           # 停止某个任务的运行（不带参数则停止守护进程）
+cronplus logs [id] [-n 20]   # 查看日志（--no-output 只取摘要，--run-id 精确取一条）
+cronplus prune [过滤条件]     # 精确删除日志条目（--task/--status/--user/--trigger/--before/--keep，--dry-run 仅统计）
 cronplus reload              # 热加载配置（无需重启）
 cronplus settings show       # 查看设置
 cronplus settings set <k> <v># 修改设置项
 cronplus settings reset      # 恢复默认设置
 cronplus export              # 导出任务 JSON
 cronplus import <file>       # 导入任务
-cronplus cleanup             # 清理僵死进程
+cronplus cleanup             # 按任务保留策略压缩日志、清理残留临时文件
 cronplus version             # 查看版本
 ```
 
 ### 手动运行特性
 
-- 实时流式输出（stdout + stderr）
-- 每次运行分配唯一 Run ID（格式 `YYMMDD-HHMMSS-xxxx`）
-- Ctrl+C 发送 SIGTERM 到子进程组
+- 与守护进程共用同一执行器（`executor.RunCommand`）：超时、环境变量白名单、输出截断、日志写入完全一致
+- 运行会出现在 `cronplus ps` 中，并受并发限制约束
+- 实时流式输出（stdout + stderr 合并）
+- 每次运行分配唯一 Run ID（格式 `#<任务号>-<用户>-manual-xxxx`）
+- Ctrl+C 向子进程组发送 SIGTERM（5 秒后 SIGKILL），并照常写入日志
 - 超时自动终止（SIGTERM → 5秒后 SIGKILL）
-- 执行结果自动写入任务日志
+- 执行结果自动写入任务日志（唯一写入者，WebUI 不再自行拼装日志）
+- **退出码透传**：任务失败时 `cronplus run` 返回任务自身的退出码，可直接用于脚本判断
+- **不自动重试**：手动运行只跑一次；重试策略（`max_retries`）只作用于计划任务
+
+### 命令行为约定
+
+- `cronplus logs <id>`：任务不存在时报错退出（1），任务存在但未运行过时输出 `No logs`
+- `cronplus prune --before/--after`：接受 `YYYY-MM-DD HH:MM:SS`、`YYYY-MM-DDTHH:MM:SS` 或 `YYYY-MM-DD`，格式非法直接报错；没有过滤条件时拒绝执行
+- `cronplus reload`：优先通过控制 socket 通知守护进程，无 systemd 的环境（容器、手工启动）同样可用，最后回退到 `SIGHUP`
 
 ## Web UI（Cockpit 插件）
 
-- **任务管理** — 增删改查、启用/禁用、搜索过滤
-- **手动运行** — 独立弹窗，运行/停止按钮切换，实时输出，复制按钮
-- **任务日志** — 分页、多维筛选（任务/用户/触发方式/状态/日期）
+- **界面语言** — 默认跟随 Cockpit 会话语言（此前被忽略，只按浏览器语言判断），可在设置里固定为 9 种语言之一
+- **任务管理** — 增删改查、启用/禁用、搜索过滤、分页（`taskPageSize`）
+- **手动运行** — 独立弹窗，运行/停止按钮切换，实时输出，复制按钮；实际由 `cronplus run` 执行
+- **运行状态** — 任务卡片显示正在运行的标记与停止按钮（数据来自 `cronplus ps`）
+- **任务日志** — 分页、多维筛选（任务/用户/触发方式/状态/日期）、展开时才加载输出
+- **日志清理** — 按天数/任务/状态/用户/保留条数精确删除，预览计数由 `cronplus prune --dry-run` 给出
 - **服务日志** — 实时刷新、级别过滤、行数限制、清理日志
 - **任务配置** — JSON 原始编辑器
 - **锚点编辑** — 编辑首次预测运行时间作为步进模式（`*/N`）的锚点，自动同步固定 cron 字段
@@ -153,18 +169,22 @@ cronplus version             # 查看版本
 ```
 # 守护进程日志
 [260423-210030-a1f2] Task [1] 每日备份 — started [auto]
-[260423-210030-a1f2] Task [1] 每日备份 — ✓ success (1234ms, exit=0, attempt=1) [auto]
+[260423-210030-a1f2] Task [1] 每日备份 — ✓ success (1.2s, exit=0, attempt=1) [auto]
 
 # CLI 输出
 ▶ [1] 每日备份 [manual] run=260423-210030-a1f2
 ...
-✓ [success] 每日备份 (exit=0, 1234ms) [manual] run=260423-210030-a1f2
+✓ [success] 每日备份 (exit=0, 1.2s) [manual] run=260423-210030-a1f2
 ```
 
 ## 日志
 
 - 守护进程日志：`/opt/cronplus/logs/cronplus.log`（自动轮转，可配置大小和备份数）
-- 任务日志：`/opt/cronplus/logs/task_{id}.json`（每任务独立，最多 1000 条）
+- 任务日志：`/opt/cronplus/logs/task_{id}.json`（每任务独立，追加写入的 JSONL，超过单文件大小上限时自动轮转）
+
+> 任务日志自 2.4.8 起为 JSONL（一行一条）。旧版的 JSON 数组文件仍可正常读取，
+> 首次追加时会自动迁移为 JSONL。追加是 `O_APPEND` 写一行，不再“读全量 → 改数组 →
+> 重写文件”，因此高频任务不会反复重写整个历史。
 
 ### 日志轮转
 
@@ -176,9 +196,26 @@ cronplus.log.1    上一轮转
 cronplus.log.2    更早
 ```
 
+任务日志按同样规则轮转（写入时检查）：
+
+```
+task_3.json       当前日志（最新）
+task_3.json.1     上一轮转
+task_3.json.2     更早
+```
+
+轮转出的分段仍会被日志界面读取，因此轮转只限制单个文件大小，不会丢掉历史记录。
+WebUI 拉取日志时按任务各取最近 50 条（`cronplus logs --all --per-task 50 --no-output`），
+所以某个高频任务不会把其他任务的日志挤出列表。`--no-output` 让列表只带摘要，
+单条输出在展开时用 `--run-id` 单独取回，避免一次刷新传输几十 MB。
+
 可在设置中配置：
 - 单文件大小上限（1/5/10/20/50 MB）
 - 保留备份数（1/3/5/10）
+
+单条运行的输出上限为 256 KB。超限时保留开头 64 KB 与结尾部分，并在中间插入
+`[cronplus] ---- output truncated ----` 标记，末尾始终追加一行
+`[cronplus] result: <status> (exit=<code>, <时长>)`，因此输出被截断时也能判断运行结果。
 
 ## 全局设置
 
@@ -194,6 +231,8 @@ cronplus.log.2    更早
   "defaultMaxRetries": 0,
   "defaultRetryInterval": 60,
   "logPageSize": 20,
+  "taskPageSize": 20,
+  "maxConcurrentTasks": 50,
   "logMaxBytes": 10485760,
   "logBackupCount": 5,
   "daemonLogLevel": "all",
@@ -204,13 +243,23 @@ cronplus.log.2    更早
 }
 ```
 
+| 设置项 | 说明 |
+| --- | --- |
+| `maxConcurrentTasks` | 守护进程全局并发上限（默认 50），达到上限的新调度会被跳过并记录日志 |
+| `taskPageSize` | WebUI 任务列表每页条数（默认 20） |
+| `logPageSize` | WebUI 日志列表每页条数（默认 20） |
+
 ## 信号
 
 ```bash
-kill -HUP <pid>     热加载配置，清理僵死进程
+kill -HUP <pid>     仅热加载配置（不会中断正在运行的任务）
 kill -TERM <pid>    优雅关闭
 kill -USR1 <pid>    输出运行状态到日志
+kill -USR2 <pid>    终止所有正在运行的任务
 ```
+
+> 2.4.8 之前 `SIGHUP` 会杀掉全部运行中的任务，因此“保存任务”这类热加载操作会误杀
+> 正在跑的任务。现在热加载与终止彻底分开，WebUI 保存任务只会触发热加载。
 
 ## 目录结构
 

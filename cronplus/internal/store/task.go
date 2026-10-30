@@ -1,8 +1,8 @@
 package store
 
 import (
-	"fmt"
 	"cronplus/pkg/model"
+	"fmt"
 )
 
 // ListTasks reads all tasks from the config file.
@@ -132,11 +132,6 @@ func (s *Store) UpdateTaskRunSeq(id int, seq int) error {
 	return fmt.Errorf("task %d not found", id)
 }
 
-// ResetTaskRunSeq resets the run_seq of a task to 0 (called on manual run).
-func (s *Store) ResetTaskRunSeq(id int) error {
-	return s.UpdateTaskRunSeq(id, 0)
-}
-
 // ToggleTaskEnabled sets the enabled state of a task to a specific value.
 func (s *Store) ToggleTaskEnabled(id int, enabled bool) error {
 	s.taskMu.Lock()
@@ -155,23 +150,47 @@ func (s *Store) ToggleTaskEnabled(id int, enabled bool) error {
 	return fmt.Errorf("task %d not found", id)
 }
 
-// ToggleTask flips the enabled state of a task.
-func (s *Store) ToggleTask(id int) (*model.Task, error) {
+// CreateTasks inserts several tasks with a single read/write cycle.
+//
+// Import used to call CreateTask in a loop, and every call re-read and rewrote
+// the whole tasks.conf: O(n²) for n imported tasks.
+func (s *Store) CreateTasks(items []model.Task) (created int, skipped []error, err error) {
 	s.taskMu.Lock()
 	defer s.taskMu.Unlock()
 
 	var tasks []model.Task
-	if _, err := ReadJSON(s.ConfPath, &tasks); err != nil {
-		return nil, err
+	if _, readErr := ReadJSON(s.ConfPath, &tasks); readErr != nil {
+		return 0, nil, fmt.Errorf("read config: %w", readErr)
 	}
-	for i := range tasks {
-		if tasks[i].ID == id {
-			tasks[i].Enabled = !tasks[i].Enabled
-			if err := writeJSON(s.ConfPath, tasks); err != nil {
-				return nil, err
-			}
-			return &tasks[i], nil
+	if tasks == nil {
+		tasks = []model.Task{}
+	}
+
+	maxID := 0
+	for _, existing := range tasks {
+		if existing.ID > maxID {
+			maxID = existing.ID
 		}
 	}
-	return nil, fmt.Errorf("task %d not found", id)
+
+	for i := range items {
+		t := items[i]
+		if verr := model.ValidateTask(&t); verr != nil {
+			skipped = append(skipped, fmt.Errorf("task %q: %w", t.Title, verr))
+			continue
+		}
+		maxID++
+		t.ID = maxID
+		t.Defaults()
+		tasks = append(tasks, t)
+		created++
+	}
+
+	if created == 0 {
+		return 0, skipped, nil
+	}
+	if err := writeJSON(s.ConfPath, tasks); err != nil {
+		return 0, skipped, err
+	}
+	return created, skipped, nil
 }

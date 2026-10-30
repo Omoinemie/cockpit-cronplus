@@ -2,13 +2,9 @@ package executor
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"log"
-	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 
 	"cronplus/internal/store"
@@ -28,10 +24,10 @@ type RunningTask struct {
 
 // Pool manages concurrent task execution with process isolation.
 type Pool struct {
-	mu       sync.RWMutex
-	running  map[int]*RunningTask
-	store    *store.Store
-	maxTotal int
+	mu           sync.RWMutex
+	running      map[int]*RunningTask
+	store        *store.Store
+	maxTotal     int
 	taskRunCount map[int]int
 }
 
@@ -63,49 +59,32 @@ func (p *Pool) Dispatch(task model.Task, trigger string) {
 func (p *Pool) IsRunning(taskID int) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	_, ok := p.running[taskID]
+	return ok
+}
+
+// Kill terminates a running task's process group and reports whether the task
+// was running.
+func (p *Pool) Kill(taskID int) bool {
+	p.mu.Lock()
 	rt, ok := p.running[taskID]
+	if ok {
+		delete(p.running, taskID)
+	}
+	p.mu.Unlock()
 	if !ok {
 		return false
 	}
-	// Verify process is still alive
-	if rt.Cmd != nil && rt.Cmd.Process != nil {
-		return true
-	}
-	return false
-}
-
-// Kill terminates a running task's process group.
-func (p *Pool) Kill(taskID int) {
-	p.mu.Lock()
-	rt, ok := p.running[taskID]
-	if !ok {
-		p.mu.Unlock()
-		return
-	}
-	delete(p.running, taskID)
-	p.mu.Unlock()
-
 	if rt.Cancel != nil {
 		rt.Cancel()
 	}
-	if rt.Cmd != nil && rt.Cmd.Process != nil {
-		// Kill the entire process group
-		pgid := rt.Cmd.Process.Pid
-		log.Printf("Pool: killing task [%d] process group pgid=%d", taskID, pgid)
-		syscall.Kill(-pgid, syscall.SIGTERM)
-		// Wait briefly, then SIGKILL
-		done := make(chan struct{})
-		go func() {
-			rt.Cmd.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			syscall.Kill(-pgid, syscall.SIGKILL)
-			<-done
-		}
-	}
+	// The process group itself is terminated by runOnce's cancellation branch
+	// (SIGTERM, then SIGKILL after a grace period). Sending signals here as well
+	// and calling cmd.Wait() would race with runOnce's own Wait(): exec.Cmd is
+	// not safe for concurrent use, and the duplicate Wait was silently stealing
+	// the exit status.
+	log.Printf("Pool: stopping task [%d] (run %s)", taskID, rt.RunID)
+	return true
 }
 
 // KillAll terminates all running tasks.
@@ -127,7 +106,7 @@ func (p *Pool) KillAll() {
 func (p *Pool) Running() []RunningInfo {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	var result []RunningInfo
+	result := make([]RunningInfo, 0, len(p.running))
 	for _, rt := range p.running {
 		result = append(result, RunningInfo{
 			TaskID:    rt.TaskID,
@@ -155,29 +134,10 @@ type RunningInfo struct {
 func (p *Pool) execute(task model.Task, trigger string) {
 	taskID := task.ID
 
-	// Generate run ID based on trigger type
-	var runID string
-	if trigger == "manual" {
-		// Manual runs don't participate in sequential numbering
-		runID = NewManualRunID(taskID, task.RunUser)
-	} else {
-		// Auto runs: increment sequence, generate #taskID-user-NNNN
-		task.RunSeq++
-		runID = NewSeqRunID(taskID, task.RunUser, task.RunSeq)
-		// Persist updated RunSeq back to config
-		if err := p.store.UpdateTaskRunSeq(taskID, task.RunSeq); err != nil {
-			log.Printf("[%s] Pool: failed to update RunSeq for task [%d]: %v", runID, taskID, err)
-		}
-		// Auto-disable task when max runs reached
-		if task.MaxRuns > 0 && task.RunSeq >= task.MaxRuns {
-			log.Printf("[%s] Task [%d] reached max runs (%d), disabling", runID, taskID, task.MaxRuns)
-			if err := p.store.ToggleTaskEnabled(taskID, false); err != nil {
-				log.Printf("[%s] Pool: failed to disable task [%d]: %v", runID, taskID, err)
-			}
-		}
-	}
-
-	// Concurrency check
+	// Concurrency checks come first. The run sequence used to be incremented
+	// before them, so a run that was skipped (already running / over the
+	// concurrency limit) still consumed a slot of max_runs and could disable the
+	// task without it ever executing.
 	p.mu.Lock()
 	if _, exists := p.running[taskID]; exists {
 		if !task.KillPrevious {
@@ -190,7 +150,6 @@ func (p *Pool) execute(task model.Task, trigger string) {
 		p.mu.Lock()
 	}
 
-	// MaxConcurrent check: count how many instances of this task are running
 	maxConcurrent := task.MaxConcurrent
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1
@@ -202,6 +161,27 @@ func (p *Pool) execute(task model.Task, trigger string) {
 		return
 	}
 	p.taskRunCount[taskID] = currentCount + 1
+	p.mu.Unlock()
+
+	// From here the run owns a concurrency slot.
+	var runID string
+	if trigger == "manual" {
+		// Manual runs don't participate in sequential numbering
+		runID = NewManualRunID(taskID, task.RunUser)
+	} else {
+		// Auto runs: increment sequence, generate #taskID-user-NNNN
+		task.RunSeq++
+		runID = NewSeqRunID(taskID, task.RunUser, task.RunSeq)
+		if err := p.store.UpdateTaskRunSeq(taskID, task.RunSeq); err != nil {
+			log.Printf("[%s] Pool: failed to update RunSeq for task [%d]: %v", runID, taskID, err)
+		}
+		if task.MaxRuns > 0 && task.RunSeq >= task.MaxRuns {
+			log.Printf("[%s] Task [%d] reached max runs (%d), disabling", runID, taskID, task.MaxRuns)
+			if err := p.store.ToggleTaskEnabled(taskID, false); err != nil {
+				log.Printf("[%s] Pool: failed to disable task [%d]: %v", runID, taskID, err)
+			}
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &RunningTask{
@@ -211,6 +191,8 @@ func (p *Pool) execute(task model.Task, trigger string) {
 		Cancel:    cancel,
 		Trigger:   trigger,
 	}
+
+	p.mu.Lock()
 	p.running[taskID] = rt
 	p.mu.Unlock()
 
@@ -247,8 +229,19 @@ func (p *Pool) execute(task model.Task, trigger string) {
 	}
 	log.Printf("[%s] Task [%d] %s — started [%s]", runID, taskID, taskName, trigger)
 
+	// Expose the process to the pool as soon as it exists, so "ps" shows a real
+	// PID and a stop request can act on the process group.
+	onStart := func(cmd *exec.Cmd) {
+		p.mu.Lock()
+		rt.Cmd = cmd
+		if cmd.Process != nil {
+			rt.PID = cmd.Process.Pid
+		}
+		p.mu.Unlock()
+	}
+
 	for attempt := 1; attempt <= 1+maxRetries; attempt++ {
-		status, outputStr, duration, exitCode := p.runOnce(ctx, task, command, attempt, trigger)
+		status, outputStr, duration, exitCode := p.runOnce(ctx, task, command, attempt, trigger, onStart)
 
 		// Write log
 		entry := model.LogEntry{
@@ -273,10 +266,14 @@ func (p *Pool) execute(task model.Task, trigger string) {
 		if status != "success" {
 			icon = "✗"
 		}
-		log.Printf("[%s] Task [%d] %s — %s %s (%dms, exit=%d, attempt=%d) [%s]",
-			runID, taskID, taskName, icon, status, duration, exitCode, attempt, trigger)
+		log.Printf("[%s] Task [%d] %s — %s %s (%s, exit=%d, attempt=%d) [%s]",
+			runID, taskID, taskName, icon, status, FormatDuration(duration), exitCode, attempt, trigger)
 
 		if status == "success" {
+			return
+		}
+		// A stopped or timed-out run must not be retried.
+		if ctx.Err() != nil || exitCode == -1 {
 			return
 		}
 		// Retry if attempts remain
@@ -296,159 +293,10 @@ func (p *Pool) execute(task model.Task, trigger string) {
 }
 
 // runOnce executes the command once and returns result.
-func (p *Pool) runOnce(ctx context.Context, task model.Task, command string, attempt int, trigger string) (status string, outputStr string, durationMs int, exitCode int) {
-	var cmd *exec.Cmd
-	if task.RunUser != "" && task.RunUser != "root" {
-		cmd = exec.Command("su", "-", task.RunUser, "-c", command)
-	} else {
-		cmd = exec.Command("bash", "-c", command)
+func (p *Pool) runOnce(ctx context.Context, task model.Task, command string, attempt int, trigger string, onStart ...func(*exec.Cmd)) (status string, outputStr string, durationMs int, exitCode int) {
+	var hook func(*exec.Cmd)
+	if len(onStart) > 0 {
+		hook = onStart[0]
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if task.Cwd != "" {
-		cmd.Dir = expandPath(task.Cwd)
-	}
-	cmd.Env = buildEnv(task.EnvVars)
-
-	// Merge stdout and stderr into a single stream.
-	//
-	// A single os.Pipe is required: cmd.StdoutPipe() hands back the read end
-	// (an io.ReadCloser), so it cannot be assigned to cmd.Stderr, which wants
-	// an io.Writer. Leaving cmd.Stderr nil makes os/exec send it to /dev/null,
-	// which is how every error message a task writes used to disappear from
-	// the log — the manual run path merges them, so the two paths disagreed.
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		status = "error"
-		outputStr = fmt.Sprintf("[cronplus] pipe error: %v", err)
-		return
-	}
-	defer pr.Close()
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-
-	startTime := time.Now()
-	if err := cmd.Start(); err != nil {
-		pw.Close()
-		status = "error"
-		outputStr = fmt.Sprintf("[cronplus] start error: %v", err)
-		durationMs = int(time.Since(startTime).Milliseconds())
-		return
-	}
-
-	// The parent must drop its copy of the write end, otherwise the reader
-	// below never sees EOF and blocks until the timeout fires.
-	pw.Close()
-
-	pgid := cmd.Process.Pid
-
-	// Read output with timeout
-	type readResult struct {
-		data []byte
-		err  error
-	}
-	ch := make(chan readResult, 1)
-	go func() {
-		data, err := io.ReadAll(pr)
-		ch <- readResult{data, err}
-	}()
-
-	var output []byte
-	timedOut := false
-
-	if task.Timeout > 0 {
-		timer := time.NewTimer(time.Duration(task.Timeout) * time.Second)
-		select {
-		case result := <-ch:
-			output = result.data
-			timer.Stop()
-		case <-timer.C:
-			timedOut = true
-			// Kill entire process group
-			syscall.Kill(-pgid, syscall.SIGTERM)
-			time.Sleep(500 * time.Millisecond)
-			syscall.Kill(-pgid, syscall.SIGKILL)
-			// Still wait for pipe to close
-			select {
-			case result := <-ch:
-				output = result.data
-			case <-time.After(3 * time.Second):
-			}
-		case <-ctx.Done():
-			timedOut = true
-			syscall.Kill(-pgid, syscall.SIGTERM)
-			time.Sleep(500 * time.Millisecond)
-			syscall.Kill(-pgid, syscall.SIGKILL)
-			select {
-			case result := <-ch:
-				output = result.data
-			case <-time.After(3 * time.Second):
-			}
-		}
-	} else {
-		// No timeout, but respect context cancellation
-		select {
-		case result := <-ch:
-			output = result.data
-		case <-ctx.Done():
-			syscall.Kill(-pgid, syscall.SIGTERM)
-			time.Sleep(500 * time.Millisecond)
-			syscall.Kill(-pgid, syscall.SIGKILL)
-			select {
-			case result := <-ch:
-				output = result.data
-			case <-time.After(3 * time.Second):
-			}
-		}
-	}
-
-	// Wait for process to exit
-	cmd.Wait()
-	durationMs = int(time.Since(startTime).Milliseconds())
-
-	exitCode = -1
-	status = "error"
-	if cmd.ProcessState != nil && cmd.ProcessState.Success() {
-		exitCode = 0
-		status = "success"
-	} else if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
-
-	outputStr = string(output)
-	if len(outputStr) > 50000 {
-		outputStr = outputStr[:50000] + "\n[cronplus] output truncated (>50KB)\n"
-	}
-
-	if timedOut {
-		outputStr += fmt.Sprintf("\n[cronplus] command timeout (%ds) terminated\n", task.Timeout)
-		status = "error"
-		exitCode = -1
-	}
-
-	return
-}
-
-// buildEnv constructs the environment slice from task env vars.
-// Applies env var sanitization to prevent privilege escalation.
-func buildEnv(envVars map[string]string) []string {
-	safe, rejected := SanitizeEnvVars(envVars)
-	if len(rejected) > 0 {
-		log.Printf("[security] Blocked dangerous env vars: %v", rejected)
-	}
-	env := os.Environ()
-	for k, v := range safe {
-		env = append(env, k+"="+v)
-	}
-	return env
-}
-
-// expandPath expands ~ to home directory.
-func expandPath(path string) string {
-	if len(path) > 0 && path[0] == '~' {
-		if home := os.Getenv("HOME"); home != "" {
-			return home + path[1:]
-		}
-	}
-	return path
+	return RunCommand(ctx, task, command, nil, nil, hook)
 }

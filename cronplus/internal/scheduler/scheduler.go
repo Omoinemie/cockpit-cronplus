@@ -16,24 +16,34 @@ import (
 // Pool is the interface the executor pool must satisfy.
 type Pool interface {
 	Dispatch(task model.Task, trigger string)
-	Kill(taskID int)
+	Kill(taskID int) bool
 	KillAll()
 	IsRunning(taskID int) bool
 }
 
 // Scheduler manages the main scheduling loop.
 type Scheduler struct {
-	store       *store.Store
-	pool        Pool
-	running     atomic.Bool
-	lastRunMu   sync.Mutex           // protects taskLastRun
-	taskLastRun map[int]time.Time
-	lastMtime   int64
-	cachedTasks []model.Task
-	rebootFired bool
-	stats       Stats
+	store          *store.Store
+	pool           Pool
+	running        atomic.Bool
+	lastRunMu      sync.Mutex // protects taskLastRun
+	taskLastRun    map[int]time.Time
+	lastMtime      int64
+	cachedTasks    []model.Task
+	rebootFired    bool
+	stats          Stats
 	lastNextTaskID int    // track last logged "Next:" task to avoid spam
-	lastNextTime  string // track last logged "Next:" time
+	lastNextTime   string // track last logged "Next:" time
+
+	// Schedule expressions are compiled once and reused: the loop runs twice a
+	// second and used to re-parse every task's cron fields on each pass.
+	compileMu sync.Mutex
+	compiled  map[string]*Compiled
+	badLogged map[string]bool
+
+	// Log cleanup runs in the background; this keeps a slow pass from stalling
+	// the scheduling loop (and from stacking up).
+	cleanupRunning atomic.Bool
 
 	// Track @reboot goroutines for graceful shutdown
 	rebootCancel context.CancelFunc
@@ -53,6 +63,8 @@ func New(s *store.Store, pool Pool) *Scheduler {
 		pool:        pool,
 		taskLastRun: make(map[int]time.Time),
 		rebootFired: !store.RebootDetected(), // if marker exists, reboot already fired
+		compiled:    make(map[string]*Compiled),
+		badLogged:   make(map[string]bool),
 	}
 
 	// Restore lastRun from persisted state
@@ -99,6 +111,10 @@ func (s *Scheduler) Wakeup() {
 	s.lastRunMu.Unlock()
 	s.lastNextTaskID = 0
 	s.lastNextTime = ""
+	s.compileMu.Lock()
+	s.compiled = make(map[string]*Compiled)
+	s.badLogged = make(map[string]bool)
+	s.compileMu.Unlock()
 	log.Println("Scheduler: cache cleared, will re-read config")
 }
 
@@ -121,11 +137,20 @@ func (s *Scheduler) loop(ctx context.Context) {
 		if time.Since(lastCleanup) > 5*time.Minute {
 			lastCleanup = time.Now()
 
-			// Cleanup logs based on per-task retention settings
-			if tasks, err := s.store.ListTasks(); err == nil {
-				if err := s.store.CleanupLogs(tasks); err != nil {
-					log.Printf("Scheduler: log cleanup error: %v", err)
-				}
+			// Cleanup logs based on per-task retention settings. This reads
+			// every task's whole history, so it must not block scheduling.
+			if s.cleanupRunning.CompareAndSwap(false, true) {
+				go func() {
+					defer s.cleanupRunning.Store(false)
+					tasks, err := s.store.ListTasks()
+					if err != nil {
+						log.Printf("Scheduler: log cleanup skipped: %v", err)
+						return
+					}
+					if err := s.store.CleanupLogs(tasks); err != nil {
+						log.Printf("Scheduler: log cleanup error: %v", err)
+					}
+				}()
 			}
 		}
 
@@ -144,57 +169,20 @@ func (s *Scheduler) loop(ctx context.Context) {
 		type candidate struct {
 			at   time.Time
 			task model.Task
-			cron [6]string
 		}
 		var candidates []candidate
+		var rebootTasks []model.Task
 
 		for _, task := range tasks {
 			if !task.Enabled {
 				continue
 			}
 
-			// Handle @reboot
+			// @reboot tasks are collected and fired as a group after this loop.
+			// The "already fired" flag used to be set inside the loop, so only
+			// the first @reboot task of a config ever ran.
 			if task.Schedule == "@reboot" {
-				if !s.rebootFired {
-					s.rebootFired = true
-					// Create a cancellable context for @reboot goroutines
-					rebootCtx, rebootCancel := context.WithCancel(ctx)
-					s.rebootCancel = rebootCancel
-
-					if task.RebootDelay > 0 {
-						log.Printf("Task [%d] @reboot: scheduled in %ds", task.ID, task.RebootDelay)
-						go func(t model.Task) {
-							select {
-							case <-time.After(time.Duration(t.RebootDelay) * time.Second):
-								// Proceed with dispatch
-							case <-rebootCtx.Done():
-								log.Printf("Task [%d] @reboot: cancelled during delay", t.ID)
-								return
-							}
-							if !s.running.Load() {
-								return
-							}
-							s.pool.Dispatch(t, "auto")
-							s.lastRunMu.Lock()
-							s.stats.TasksExecuted++
-							s.stats.LastRun = time.Now().Format(time.RFC3339)
-							s.lastRunMu.Unlock()
-
-							// Persist lastRun for @reboot tasks
-							s.store.SetTaskLastRun(t.ID, time.Now().Unix())
-						}(task)
-					} else {
-						log.Printf("Task [%d] @reboot: firing now", task.ID)
-						s.pool.Dispatch(task, "auto")
-						s.lastRunMu.Lock()
-						s.stats.TasksExecuted++
-						s.stats.LastRun = time.Now().Format(time.RFC3339)
-						s.lastRunMu.Unlock()
-
-						// Persist lastRun for @reboot tasks
-						s.store.SetTaskLastRun(task.ID, time.Now().Unix())
-					}
-				}
+				rebootTasks = append(rebootTasks, task)
 				continue
 			}
 
@@ -206,9 +194,8 @@ func (s *Scheduler) loop(ctx context.Context) {
 				}
 			}
 
-			fields, err := ParseSchedule(task.Schedule)
-			if err != nil {
-				log.Printf("Task [%d] bad schedule %q: %v", task.ID, task.Schedule, err)
+			compiled := s.scheduleFor(task)
+			if compiled == nil {
 				continue
 			}
 
@@ -218,9 +205,18 @@ func (s *Scheduler) loop(ctx context.Context) {
 			if lastRun.IsZero() {
 				lastRun = now.Add(-time.Second)
 			}
-			nxt := NextRunTimeFromAnchor(fields, lastRun, task.CronBaseTime)
+			nxt := compiled.NextFromAnchor(lastRun, task.CronBaseTime)
 			if !nxt.IsZero() {
-				candidates = append(candidates, candidate{at: nxt, task: task, cron: fields})
+				candidates = append(candidates, candidate{at: nxt, task: task})
+			}
+		}
+
+		if len(rebootTasks) > 0 && !s.rebootFired {
+			s.rebootFired = true
+			rebootCtx, rebootCancel := context.WithCancel(ctx)
+			s.rebootCancel = rebootCancel
+			for _, t := range rebootTasks {
+				s.fireRebootTask(rebootCtx, t)
 			}
 		}
 
@@ -357,6 +353,61 @@ func (s *Scheduler) loadTasks() ([]model.Task, error) {
 		log.Printf("Config reloaded: %d tasks", len(tasks))
 	}
 	return s.cachedTasks, nil
+}
+
+// scheduleFor returns the compiled form of a task's schedule, caching both
+// successes and failures so a broken expression is only logged once.
+func (s *Scheduler) scheduleFor(task model.Task) *Compiled {
+	spec := task.Schedule
+	s.compileMu.Lock()
+	defer s.compileMu.Unlock()
+	if c, ok := s.compiled[spec]; ok {
+		return c
+	}
+	c, err := Compile(spec)
+	if err != nil {
+		if !s.badLogged[spec] {
+			s.badLogged[spec] = true
+			log.Printf("Task [%d] bad schedule %q: %v (task will not run)", task.ID, spec, err)
+		}
+		s.compiled[spec] = nil
+		return nil
+	}
+	s.compiled[spec] = c
+	return c
+}
+
+// fireRebootTask dispatches one @reboot task, honouring its reboot_delay.
+func (s *Scheduler) fireRebootTask(ctx context.Context, task model.Task) {
+	dispatch := func(t model.Task) {
+		if !s.running.Load() {
+			return
+		}
+		s.pool.Dispatch(t, "auto")
+		s.lastRunMu.Lock()
+		s.stats.TasksExecuted++
+		s.stats.LastRun = time.Now().Format(time.RFC3339)
+		s.lastRunMu.Unlock()
+		if err := s.store.SetTaskLastRun(t.ID, time.Now().Unix()); err != nil {
+			log.Printf("Scheduler: failed to persist lastRun for task [%d]: %v", t.ID, err)
+		}
+	}
+
+	if task.RebootDelay > 0 {
+		log.Printf("Task [%d] @reboot: scheduled in %ds", task.ID, task.RebootDelay)
+		go func(t model.Task) {
+			select {
+			case <-time.After(time.Duration(t.RebootDelay) * time.Second):
+			case <-ctx.Done():
+				log.Printf("Task [%d] @reboot: cancelled during delay", t.ID)
+				return
+			}
+			dispatch(t)
+		}(task)
+		return
+	}
+	log.Printf("Task [%d] @reboot: firing now", task.ID)
+	dispatch(task)
 }
 
 // driftSleep sleeps with drift compensation — aligns to the next second boundary.

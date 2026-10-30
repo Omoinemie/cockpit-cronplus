@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -12,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"cronplus/internal/control"
 	"cronplus/internal/executor"
 	"cronplus/internal/store"
 	"cronplus/pkg/model"
@@ -45,6 +48,8 @@ func main() {
 		exitCode = cmdList(args)
 	case "run":
 		exitCode = cmdRun(args)
+	case "ps":
+		exitCode = cmdPS(args)
 	case "logs":
 		exitCode = cmdLogs(args)
 	case "export":
@@ -53,12 +58,17 @@ func main() {
 		exitCode = cmdImport(args)
 	case "clear-logs":
 		exitCode = cmdClearLogs(args)
+	case "prune":
+		exitCode = cmdLogsPrune(args)
 	case "cleanup":
 		exitCode = cmdCleanup(args)
 	case "settings":
 		exitCode = cmdSettings(args)
 	case "version", "-v", "--version":
 		fmt.Printf("cronplus v%s\n", version)
+	case "help", "-h", "--help":
+		printUsage()
+		exitCode = 0
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
@@ -72,18 +82,23 @@ func printUsage() {
 
 Commands:
   start        Start the daemon
-  stop         Stop the daemon
   restart      Restart the daemon
-  reload       Reload config without restart
+  reload       Reload config without restart (running tasks are not touched)
   status       Show daemon & task status
   list (ls)    List all tasks
-  run <id>     Run a task immediately
+  run <id>     Run a task immediately (streams output, writes the run log)
+  ps           Show tasks that are running right now
+  stop [id]    Stop a running task, or the daemon when no id is given
   logs [id]    Show execution logs
+               (-n N = max entries, --per-task N = per task,
+                --no-output = skip output, --run-id ID = one entry)
+  prune        Delete selected log entries (see 'cronplus prune --help')
   export       Export tasks to stdout (JSON)
   import <f>   Import tasks from JSON file
   clear-logs   Clear all execution logs
-  cleanup      Clean up stuck task entries
+  cleanup      Apply retention rules and clean up stale temp files
   settings     Show/update settings
+  help         Show this help
   version      Show version info
 
 Examples:
@@ -110,17 +125,27 @@ func systemctl(action string) int {
 	return 0
 }
 
+// daemonPID returns the daemon's pid, or 0 when it is not running.
+//
+// systemd is asked first (the packaged service is the normal case), then the
+// control socket: without that fallback every command that needs to signal the
+// daemon reported "not running" whenever systemd was not supervising it, even
+// though the daemon was alive and answering on its socket.
 func daemonPID() int {
 	cmd := exec.Command("systemctl", "show", "-p", "MainPID", "--value", serviceName)
-	out, err := cmd.Output()
-	if err != nil {
-		return 0
+	// Probing must stay quiet: on a host without systemd (container, PID 1 not
+	// systemd) systemctl itself writes "System has not been booted with systemd"
+	// to stderr, which used to leak into the output of every cronplus command.
+	cmd.Stderr = io.Discard
+	if out, err := cmd.Output(); err == nil {
+		if pid, _ := strconv.Atoi(strings.TrimSpace(string(out))); pid > 0 {
+			return pid
+		}
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-	if pid <= 0 {
-		return 0
+	if resp, err := control.Do(control.SocketPath(store.DefaultConfFile), control.Request{Cmd: "ping"}); err == nil && resp.OK {
+		return resp.PID
 	}
-	return pid
+	return 0
 }
 
 func cmdStart(_ []string) int {
@@ -131,7 +156,26 @@ func cmdStart(_ []string) int {
 	return systemctl("start")
 }
 
-func cmdStop(_ []string) int {
+func cmdStop(args []string) int {
+	// `cronplus stop <id>` stops one task; `cronplus stop` stops the daemon.
+	if len(args) > 0 {
+		taskID, err := strconv.Atoi(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid task ID: %s\n", args[0])
+			return 1
+		}
+		resp, err := control.Do(control.SocketPath(store.DefaultConfFile), control.Request{Cmd: "stop", TaskID: taskID})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cronplus: daemon not reachable (%v)\n", err)
+			return 1
+		}
+		if !resp.OK {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Error)
+			return 1
+		}
+		fmt.Printf("Task %d stopped\n", taskID)
+		return 0
+	}
 	if pid := daemonPID(); pid == 0 {
 		fmt.Println("cronplus: not running")
 		return 0
@@ -139,16 +183,64 @@ func cmdStop(_ []string) int {
 	return systemctl("stop")
 }
 
+func cmdPS(args []string) int {
+	jsonOutput := false
+	for _, a := range args {
+		if a == "--json" || a == "-j" {
+			jsonOutput = true
+		}
+	}
+	resp, err := control.Do(control.SocketPath(store.DefaultConfFile), control.Request{Cmd: "ps"})
+	if err != nil {
+		if jsonOutput {
+			fmt.Println("[]")
+		} else {
+			fmt.Println("cronplus: daemon not reachable")
+		}
+		return 0
+	}
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.Encode(resp.Running)
+		return 0
+	}
+	if len(resp.Running) == 0 {
+		fmt.Println("No running tasks")
+		return 0
+	}
+	for _, r := range resp.Running {
+		fmt.Printf("  [%d] pid=%d %s started=%s duration=%s run=%s\n",
+			r.TaskID, r.PID, r.Trigger, r.StartTime, executor.FormatDuration(r.Duration), r.RunID)
+	}
+	return 0
+}
+
 func cmdRestart(_ []string) int {
 	return systemctl("restart")
 }
 
 func cmdReload(_ []string) int {
-	if pid := daemonPID(); pid == 0 {
+	// Prefer the control socket: `systemctl reload` needs systemd as PID 1,
+	// which is not the case in containers or when cronplusd was started by
+	// hand, so reload used to fail even though the daemon was running.
+	if resp, err := control.Do(control.SocketPath(store.DefaultConfFile), control.Request{Cmd: "reload"}); err == nil && resp.OK {
+		fmt.Println("cronplus: config reloaded")
+		return 0
+	}
+	pid := daemonPID()
+	if pid == 0 {
 		fmt.Println("cronplus: not running")
 		return 1
 	}
-	return systemctl("reload")
+	if err := systemctl("reload"); err != 0 {
+		// Last resort: the documented signal path.
+		if sigErr := syscall.Kill(pid, syscall.SIGHUP); sigErr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", sigErr)
+			return 1
+		}
+		fmt.Println("cronplus: config reloaded (SIGHUP)")
+	}
+	return 0
 }
 
 func cmdStatus(_ []string) int {
@@ -184,6 +276,14 @@ func cmdStatus(_ []string) int {
 		}
 	}
 	fmt.Printf("Logs: %d entries (%d success, %d failed)\n", len(allLogs), success, failed)
+
+	if resp, err := control.Do(control.SocketPath(store.DefaultConfFile), control.Request{Cmd: "ps"}); err == nil {
+		fmt.Printf("Running: %d\n", len(resp.Running))
+		for _, r := range resp.Running {
+			fmt.Printf("  [%d] pid=%d started=%s duration=%s\n",
+				r.TaskID, r.PID, r.StartTime, executor.FormatDuration(r.Duration))
+		}
+	}
 
 	if _, err := os.Stat("/run/cronplus"); err == nil {
 		fmt.Println("Reboot marker: present (will skip @reboot tasks on next start)")
@@ -239,6 +339,28 @@ func cmdRun(args []string) int {
 		return 1
 	}
 
+	// A manual run and a scheduled run of the same task must not overlap. Ask
+	// the daemon first: stop the running instance when the task asks for it,
+	// refuse otherwise.
+	if running, ok := daemonRunning(taskID); ok {
+		if !task.KillPrevious {
+			fmt.Fprintf(os.Stderr, "Task %d is already running (pid %d).\nStop it first: cronplus stop %d\n",
+				taskID, running.PID, taskID)
+			return 1
+		}
+		if resp, err := control.Do(control.SocketPath(store.DefaultConfFile), control.Request{Cmd: "stop", TaskID: taskID}); err != nil || !resp.OK {
+			fmt.Fprintf(os.Stderr, "Warning: could not stop the running instance\n")
+		}
+	}
+
+	// Manual runs honour the global default timeout too; the scheduled path has
+	// always done this, so the two disagreed.
+	if task.Timeout <= 0 {
+		if settings, err := s.ReadSettings(); err == nil && settings.DefaultTimeout > 0 {
+			task.Timeout = settings.DefaultTimeout
+		}
+	}
+
 	title := task.Title
 	if title == "" {
 		title = task.Command
@@ -249,103 +371,74 @@ func cmdRun(args []string) int {
 	runID := executor.NewManualRunID(taskID, task.RunUser)
 	fmt.Printf("▶ [%d] %s [manual] run=%s\n", taskID, title, runID)
 
-	// Execute command directly with real-time streaming output
-	command := executor.DecodeCommand(task.Command)
-	var cmd *exec.Cmd
-	if task.RunUser != "" && task.RunUser != "root" {
-		cmd = exec.Command("su", "-", task.RunUser, "-c", command)
-	} else {
-		cmd = exec.Command("bash", "-c", command)
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if task.Cwd != "" {
-		cmd.Dir = expandPath(task.Cwd)
-	}
-	cmd.Env = buildEnv(task.EnvVars)
-
-	// Stream stdout + stderr in real time
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	startTime := time.Now()
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting command: %v\n", err)
-		return 1
-	}
-
-	pgid := cmd.Process.Pid
-
-	// Signal handler: forward SIGINT/SIGTERM to child process group
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	done := make(chan error, 1)
-
+	// SIGHUP is included on purpose: when the WebUI closes the Cockpit channel
+	// it terminates the process with SIGHUP/SIGTERM depending on the transport.
+	// Handling it here means "stop" always runs the orderly path — kill the
+	// task's process group and still write the log entry — instead of dying
+	// silently and leaving a run with no history.
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	stopped := make(chan struct{})
 	go func() {
-		done <- cmd.Wait()
-	}()
-
-	go func() {
-		for sig := range sigCh {
-			fmt.Fprintf(os.Stderr, "\n[manual] received %s, stopping...\n", sig)
-			syscall.Kill(-pgid, syscall.SIGTERM)
-		}
-	}()
-
-	// Wait for completion, timeout, or signal
-	var timedOut bool
-	var runErr error
-
-	if task.Timeout > 0 {
 		select {
-		case runErr = <-done:
-			// finished
-		case <-time.After(time.Duration(task.Timeout) * time.Second):
-			timedOut = true
-			fmt.Fprintf(os.Stderr, "\n[manual] timeout (%ds), killing process group...\n", task.Timeout)
-			syscall.Kill(-pgid, syscall.SIGTERM)
-			time.Sleep(500 * time.Millisecond)
-			syscall.Kill(-pgid, syscall.SIGKILL)
-			<-done
+		case <-sigCh:
+			fmt.Fprintf(os.Stderr, "\n[manual] stopping...\n")
+			cancel()
+		case <-stopped:
 		}
-	} else {
-		runErr = <-done
-	}
+	}()
 
+	command := executor.DecodeCommand(task.Command)
+	// Same executor as the daemon: identical timeout handling, env sanitising
+	// and output truncation. Output is streamed to stdout *and* captured for
+	// the log, which used to be stored empty for manual CLI runs.
+	status, output, durationMs, exitCode := executor.RunCommand(ctx, *task, command, os.Stdin, os.Stdout, nil)
 	signal.Stop(sigCh)
+	close(stopped)
 	close(sigCh)
 
-	durationMs := int(time.Since(startTime).Milliseconds())
-
-	if timedOut {
-		fmt.Fprintf(os.Stderr, "[%s] error: command timeout (%ds) terminated\n", runID, task.Timeout)
-		writeRunLog(runID, s, task, command, "error", fmt.Sprintf("[cronplus] command timeout (%ds) terminated\n", task.Timeout), durationMs, -1)
-		return 1
-	}
-
-	exitCode := 0
-	status := "success"
-	if runErr != nil {
-		status = "error"
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = -1
-		}
-	}
+	writeRunLog(runID, s, task, command, status, output, durationMs, exitCode)
 
 	icon := "✓"
 	if status != "success" {
 		icon = "✗"
 	}
-	fmt.Printf("\n%s [%s] %s (exit=%d, %dms) [%s] run=%s\n", icon, status, title, exitCode, durationMs, "manual", runID)
-	writeRunLog(runID, s, task, command, status, "", durationMs, exitCode)
+	fmt.Printf("\n%s [%s] %s (exit=%d, %s) [%s] run=%s\n",
+		icon, status, title, exitCode, executor.FormatDuration(durationMs), "manual", runID)
 
 	if status != "success" {
+		// Propagate the task's own exit status so callers can rely on
+		// `cronplus run <id>` the way they would on the command itself. It used
+		// to always return 1, so `cronplus run 2 && ...` could not tell a
+		// task exiting 7 from one that never started. A negative status means
+		// killed/timed out, which has no portable exit code — use 1 for that.
+		if exitCode > 0 && exitCode < 256 {
+			return exitCode
+		}
 		return 1
 	}
 	return 0
 }
 
+// daemonRunning asks the control socket whether a task is currently running.
+func daemonRunning(taskID int) (executor.RunningInfo, bool) {
+	resp, err := control.Do(control.SocketPath(store.DefaultConfFile), control.Request{Cmd: "ps"})
+	if err != nil {
+		return executor.RunningInfo{}, false
+	}
+	for _, r := range resp.Running {
+		if r.TaskID == taskID {
+			return r, true
+		}
+	}
+	return executor.RunningInfo{}, false
+}
+
+// writeRunLog stores a manual run in the task's log. It goes through the store
+// so rotation, permissions and the JSONL format stay identical to scheduled
+// runs; the WebUI used to keep its own copy of this logic in JavaScript.
 func writeRunLog(runID string, s *store.Store, task *model.Task, command, status, output string, durationMs, exitCode int) {
 	entry := model.LogEntry{
 		RunID:     runID,
@@ -364,111 +457,6 @@ func writeRunLog(runID string, s *store.Store, task *model.Task, command, status
 	if err := s.AppendLog(entry); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write log: %v\n", err)
 	}
-}
-
-func buildEnv(envVars map[string]string) []string {
-	safe, rejected := executor.SanitizeEnvVars(envVars)
-	if len(rejected) > 0 {
-		fmt.Fprintf(os.Stderr, "[security] Blocked dangerous env vars: %v\n", rejected)
-	}
-	env := os.Environ()
-	for k, v := range safe {
-		env = append(env, k+"="+v)
-	}
-	return env
-}
-
-func expandPath(path string) string {
-	if len(path) > 0 && path[0] == '~' {
-		if home := os.Getenv("HOME"); home != "" {
-			return home + path[1:]
-		}
-	}
-	return path
-}
-
-func cmdLogs(args []string) int {
-	s := defaultStore()
-	taskID := 0
-	limit := 50
-	jsonOutput := false
-	showAll := false
-
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "-n", "--limit":
-			if i+1 < len(args) {
-				limit, _ = strconv.Atoi(args[i+1])
-				i++
-			}
-		case "--json", "-j":
-			jsonOutput = true
-		case "--all", "-a":
-			showAll = true
-			taskID = 0
-		default:
-			if taskID == 0 && !strings.HasPrefix(args[i], "-") {
-				taskID, _ = strconv.Atoi(args[i])
-			}
-		}
-	}
-
-	if showAll {
-		taskID = 0
-	}
-
-	logs, err := s.ListLogs(taskID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return 1
-	}
-
-	// Sort newest first
-	sort.Slice(logs, func(i, j int) bool {
-		return logs[i].CreatedAt > logs[j].CreatedAt
-	})
-
-	if limit > 0 && len(logs) > limit {
-		logs = logs[:limit]
-	}
-
-	if jsonOutput {
-		// Reverse to chronological for JSON
-		for i := len(logs)/2 - 1; i >= 0; i-- {
-			opp := len(logs) - 1 - i
-			logs[i], logs[opp] = logs[opp], logs[i]
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.Encode(logs)
-		return 0
-	}
-
-	if len(logs) == 0 {
-		fmt.Println("No logs")
-		return 0
-	}
-
-	// Reverse to show newest last (chronological)
-	for i := len(logs)/2 - 1; i >= 0; i-- {
-		opp := len(logs) - 1 - i
-		logs[i], logs[opp] = logs[opp], logs[i]
-	}
-
-	for _, l := range logs {
-		icon := "✓"
-		if l.Status != "success" {
-			icon = "✗"
-		}
-		title := l.Title
-		if title == "" {
-			title = l.Command
-			if len(title) > 50 {
-				title = title[:50]
-			}
-		}
-		fmt.Printf("  %s [%s] %s  (%dms)\n", icon, l.CreatedAt, title, l.Duration)
-	}
-	return 0
 }
 
 func cmdExport(_ []string) int {
@@ -542,33 +530,23 @@ func cmdImport(args []string) int {
 	s := defaultStore()
 	count := 0
 	skipped := 0
+	// One read/write cycle for the whole file: CreateTask in a loop re-read and
+	// rewrote tasks.conf for every imported task (O(n²) plus n fsyncs).
+	var toImport []model.Task
 	for _, t := range wrapper.Tasks {
-		if t.Command == "" {
-			skipped++
-			continue
-		}
-		// Validate schedule
-		if t.Schedule != "" && t.Schedule != "@reboot" {
-			parts := strings.Fields(t.Schedule)
-			if len(parts) != 5 && len(parts) != 6 {
-				fmt.Fprintf(os.Stderr, "Warning: task %q has invalid schedule %q, skipping\n", t.Title, t.Schedule)
-				skipped++
-				continue
-			}
-		}
-		// Validate run_user
-		if err := model.ValidateRunUser(t.RunUser); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: task %q: %v, skipping\n", t.Title, err)
-			skipped++
-			continue
-		}
 		t.ID = 0 // auto-assign
-		if err := s.CreateTask(&t); err != nil {
-			fmt.Fprintf(os.Stderr, "Error importing task: %v\n", err)
-			continue
-		}
-		count++
+		toImport = append(toImport, t)
 	}
+	count, invalid, err := s.CreateTasks(toImport)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error importing tasks: %v\n", err)
+		return 1
+	}
+	for _, e := range invalid {
+		fmt.Fprintf(os.Stderr, "Warning: skipped %v\n", e)
+	}
+	skipped += len(invalid)
+
 	fmt.Printf("Imported %d tasks", count)
 	if skipped > 0 {
 		fmt.Printf(" (%d skipped)", skipped)
@@ -580,6 +558,256 @@ func cmdImport(args []string) int {
 		syscall.Kill(pid, syscall.SIGHUP)
 	}
 	return 0
+}
+
+func cmdLogs(args []string) int {
+	s := defaultStore()
+	taskID := 0
+	limit := 50
+	perTask := 0
+	jsonOutput := false
+	noOutput := false
+	runID := ""
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-n", "--limit":
+			if i+1 < len(args) {
+				limit, _ = strconv.Atoi(args[i+1])
+				i++
+			}
+		case "-p", "--per-task":
+			if i+1 < len(args) {
+				perTask, _ = strconv.Atoi(args[i+1])
+				i++
+			}
+		case "--json", "-j":
+			jsonOutput = true
+		case "--no-output":
+			// Summary mode: skip the (up to 256KB) output of every entry. The
+			// WebUI loads one entry's output only when it is expanded.
+			noOutput = true
+		case "--run-id":
+			// Fetch exactly one entry, output included (used by the WebUI when
+			// an entry is expanded).
+			if i+1 < len(args) {
+				runID = args[i+1]
+				i++
+			}
+		case "--all", "-a":
+			taskID = 0
+		default:
+			if taskID == 0 && !strings.HasPrefix(args[i], "-") {
+				taskID, _ = strconv.Atoi(args[i])
+			}
+		}
+	}
+
+	var logs []model.LogEntry
+	var err error
+	if taskID > 0 {
+		// Distinguish "no such task" from "this task has not run yet". Both
+		// printed "No logs" before, so a typo looked like an empty history.
+		known := false
+		if tasks, lerr := s.ListTasks(); lerr == nil {
+			for _, t := range tasks {
+				if t.ID == taskID {
+					known = true
+					break
+				}
+			}
+		}
+		if !known && !s.HasTaskLog(taskID) {
+			fmt.Fprintf(os.Stderr, "Error: task %d not found\n", taskID)
+			return 1
+		}
+	}
+	if taskID == 0 && perTask > 0 {
+		logs, err = s.ListLogsPerTask(perTask)
+	} else {
+		logs, err = s.ListLogs(taskID)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+
+	if runID != "" {
+		filtered := make([]model.LogEntry, 0, 1)
+		for _, l := range logs {
+			if l.RunID == runID {
+				filtered = append(filtered, l)
+			}
+		}
+		logs = filtered
+	}
+
+	// Sort newest first
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].CreatedAt > logs[j].CreatedAt
+	})
+
+	if limit > 0 && len(logs) > limit {
+		logs = logs[:limit]
+	}
+
+	if noOutput {
+		for i := range logs {
+			logs[i].Output = ""
+		}
+	}
+
+	if jsonOutput {
+		// Reverse to chronological for JSON
+		for i := len(logs)/2 - 1; i >= 0; i-- {
+			opp := len(logs) - 1 - i
+			logs[i], logs[opp] = logs[opp], logs[i]
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.Encode(logs)
+		return 0
+	}
+
+	if len(logs) == 0 {
+		fmt.Println("No logs")
+		return 0
+	}
+
+	// Reverse to show newest last (chronological)
+	for i := len(logs)/2 - 1; i >= 0; i-- {
+		opp := len(logs) - 1 - i
+		logs[i], logs[opp] = logs[opp], logs[i]
+	}
+
+	for _, l := range logs {
+		icon := "✓"
+		if l.Status != "success" {
+			icon = "✗"
+		}
+		title := l.Title
+		if title == "" {
+			title = l.Command
+			if len(title) > 50 {
+				title = title[:50]
+			}
+		}
+		fmt.Printf("  %s [%s] %s  (%s)\n", icon, l.CreatedAt, title, executor.FormatDuration(l.Duration))
+	}
+	return 0
+}
+
+// cmdLogsPrune deletes selected log entries. The WebUI used to delete a whole
+// task's history for any cleanup mode, which threw away entries the preview
+// said would be kept.
+func cmdLogsPrune(args []string) int {
+	filter := store.PruneFilter{}
+	jsonOutput := false
+
+	needValue := func(i int, flag string) (string, bool) {
+		if i+1 >= len(args) {
+			fmt.Fprintf(os.Stderr, "Error: %s needs a value\n", flag)
+			return "", false
+		}
+		return args[i+1], true
+	}
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--task":
+			v, ok := needValue(i, "--task")
+			if !ok {
+				return 1
+			}
+			filter.TaskID, _ = strconv.Atoi(v)
+			i++
+		case "--status":
+			v, ok := needValue(i, "--status")
+			if !ok {
+				return 1
+			}
+			filter.Status = v
+			i++
+		case "--user":
+			v, ok := needValue(i, "--user")
+			if !ok {
+				return 1
+			}
+			filter.User = v
+			i++
+		case "--trigger":
+			v, ok := needValue(i, "--trigger")
+			if !ok {
+				return 1
+			}
+			filter.Trigger = v
+			i++
+		case "--before":
+			v, ok := needValue(i, "--before")
+			if !ok {
+				return 1
+			}
+			filter.Before = v
+			i++
+		case "--after":
+			v, ok := needValue(i, "--after")
+			if !ok {
+				return 1
+			}
+			filter.After = v
+			i++
+		case "--keep":
+			v, ok := needValue(i, "--keep")
+			if !ok {
+				return 1
+			}
+			filter.Keep, _ = strconv.Atoi(v)
+			i++
+		case "--dry-run":
+			filter.DryRun = true
+		case "--json":
+			jsonOutput = true
+		case "-h", "--help":
+			printPruneUsage()
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown option: %s\n", args[i])
+			printPruneUsage()
+			return 1
+		}
+	}
+
+	deleted, err := defaultStore().Prune(filter)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	if jsonOutput {
+		out, _ := json.Marshal(map[string]int{"deleted": deleted})
+		fmt.Println(string(out))
+		return 0
+	}
+	if filter.DryRun {
+		fmt.Printf("Would delete %d entries\n", deleted)
+		return 0
+	}
+	fmt.Printf("Deleted %d entries\n", deleted)
+	return 0
+}
+
+func printPruneUsage() {
+	fmt.Println(`Usage: cronplus prune [filters] [--keep N] [--dry-run] [--json]
+
+Deletes log entries matching ALL given filters. At least one filter is required.
+
+  --task <id>          only this task
+  --status <s>         success | error
+  --user <u>           only runs of this user
+  --trigger <t>        auto | manual
+  --before <datetime>  entries older than "YYYY-MM-DD HH:MM:SS"
+  --after <datetime>   entries newer than "YYYY-MM-DD HH:MM:SS"
+  --keep <n>           keep the newest n matching entries per task
+  --dry-run            count only, delete nothing
+  --json               {"deleted": n}`)
 }
 
 func cmdClearLogs(args []string) int {
@@ -600,14 +828,37 @@ func cmdClearLogs(args []string) int {
 	return 0
 }
 
+// cmdCleanup actually cleans something.
+//
+// It used to only send SIGHUP, which meant "cleanup" killed every running task
+// (SIGHUP called pool.KillAll) and did no cleaning at all.
 func cmdCleanup(_ []string) int {
-	pid := daemonPID()
-	if pid == 0 {
-		fmt.Println("cronplus: not running, nothing to clean up")
-		return 0
+	s := defaultStore()
+
+	tasks, err := s.ListTasks()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading tasks: %v\n", err)
+		return 1
 	}
-	syscall.Kill(pid, syscall.SIGHUP)
-	fmt.Println("Cleanup signal sent (SIGHUP)")
+	if err := s.CleanupLogs(tasks); err != nil {
+		fmt.Fprintf(os.Stderr, "Log cleanup failed: %v\n", err)
+		return 1
+	}
+	removed, err := s.CleanupTempFiles()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Temp file cleanup failed: %v\n", err)
+		return 1
+	}
+	if err := s.FlushState(); err != nil {
+		fmt.Fprintf(os.Stderr, "State flush failed: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Cleanup done: retention applied to %d tasks, %d stale temp files removed\n", len(tasks), removed)
+
+	// Ask the daemon to reload config; this no longer interrupts running tasks.
+	if pid := daemonPID(); pid > 0 {
+		syscall.Kill(pid, syscall.SIGHUP)
+	}
 	return 0
 }
 
@@ -699,6 +950,21 @@ func cmdSettings(args []string) int {
 				return 1
 			}
 			settings.LogPageSize = v
+		case "taskPageSize":
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 1 || v > 1000 {
+				fmt.Fprintf(os.Stderr, "Invalid taskPageSize: %s (must be 1-1000)\n", value)
+				return 1
+			}
+			settings.TaskPageSize = v
+		case "maxConcurrentTasks":
+			// The pool size used to be hard-coded to 50 with no way to change it.
+			v, err := strconv.Atoi(value)
+			if err != nil || v < 1 || v > 1000 {
+				fmt.Fprintf(os.Stderr, "Invalid maxConcurrentTasks: %s (must be 1-1000)\n", value)
+				return 1
+			}
+			settings.MaxConcurrentTasks = v
 		case "logMaxBytes":
 			v, err := strconv.Atoi(value)
 			if err != nil || v < 1024 || v > 100*1024*1024 {

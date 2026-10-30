@@ -44,33 +44,58 @@ The daemon starts automatically after installation.
 ## CLI Usage
 
 ```bash
-cronplus status              # Show daemon & task status
+cronplus status              # Show daemon & task status (incl. running tasks)
 cronplus list                # List all tasks
+cronplus ps [--json]         # Show running tasks (from the daemon control socket)
 cronplus run <id>            # Run task immediately (real-time output, Ctrl+C to stop)
-cronplus logs [id] [-n 20]   # View execution logs
+cronplus stop <id>           # Stop a running task (no argument stops the daemon)
+cronplus logs [id] [-n 20]   # View logs (--no-output = summaries, --run-id = one entry)
+cronplus prune [filters]     # Delete selected log entries (--task/--status/--user/--trigger/--before/--keep, --dry-run)
 cronplus reload              # Hot-reload config without restart
 cronplus settings show       # View settings
 cronplus settings set <k> <v># Update a setting
 cronplus settings reset      # Reset to defaults
 cronplus export              # Export tasks as JSON
 cronplus import <file>       # Import tasks from JSON
-cronplus cleanup             # Clean up stuck task entries
+cronplus cleanup             # Apply retention rules and remove stale temp files
 cronplus version             # Show version
 ```
 
 ### Manual Run
 
-- Real-time streaming output (stdout + stderr)
-- Unique Run ID per execution (`YYMMDD-HHMMSS-xxxx`)
-- Ctrl+C sends SIGTERM to child process group
+- Shares the daemon's executor (`executor.RunCommand`): identical timeout, env
+  allow-list, output truncation and log writing
+- The run shows up in `cronplus ps` and counts towards the concurrency limit
+- Real-time streaming output (stdout + stderr merged)
+- Unique Run ID per execution (`#<task>-<user>-manual-xxxx`)
+- Ctrl+C sends SIGTERM to the child process group (SIGKILL after 5s) and still
+  writes the log entry
 - Timeout auto-termination (SIGTERM → SIGKILL after 5s)
-- Results automatically written to task logs
+- Results automatically written to task logs — the CLI is the only writer, the
+  WebUI no longer assembles log entries of its own
+- **Exit status is passed through**: a failing task makes `cronplus run` exit
+  with the task's own code, so it can be used in scripts
+- **No automatic retries**: a manual run executes once; `max_retries` applies to
+  scheduled runs only
+
+### Command behaviour
+
+- `cronplus logs <id>`: exits 1 when the task does not exist, prints `No logs`
+  when it exists but has never run
+- `cronplus prune --before/--after`: accepts `YYYY-MM-DD HH:MM:SS`,
+  `YYYY-MM-DDTHH:MM:SS` or `YYYY-MM-DD` and rejects anything else; refuses to run
+  without a filter
+- `cronplus reload`: notifies the daemon over the control socket first, so it
+  works without systemd (containers, hand-started daemon); falls back to `SIGHUP`
 
 ## Web UI (Cockpit Plugin)
 
-- **Task Management** — CRUD, enable/disable, search & filter
-- **Manual Run** — dedicated modal with run/stop toggle, real-time output, copy button
-- **Task Logs** — pagination, multi-dimensional filters (task/user/trigger/status/date)
+- **UI Language** — follows the Cockpit session language by default (previously ignored in favour of the browser locale), pinnable to any of the 9 bundled languages
+- **Task Management** — CRUD, enable/disable, search & filter, paging (`taskPageSize`)
+- **Manual Run** — dedicated modal with run/stop toggle, real-time output, copy button; executed by `cronplus run`
+- **Running State** — task cards show a running badge and a stop button (data from `cronplus ps`)
+- **Task Logs** — pagination, multi-dimensional filters (task/user/trigger/status/date), output loaded only on expand
+- **Log Cleanup** — delete by age/task/status/user/kept-entries, with the preview count coming from `cronplus prune --dry-run`
 - **Daemon Log** — live refresh, level filtering, line limit, clear log
 - **Raw Editor** — direct JSON config editing
 - **Anchor Editing** — edit the first predicted run time as anchor for step patterns (`*/N`), with auto-sync of fixed cron fields
@@ -159,18 +184,23 @@ Every execution gets a unique identifier `YYMMDD-HHMMSS-xxxx` that flows through
 ```
 # Daemon log
 [260423-210030-a1f2] Task [1] Daily Backup — started [auto]
-[260423-210030-a1f2] Task [1] Daily Backup — ✓ success (1234ms, exit=0, attempt=1) [auto]
+[260423-210030-a1f2] Task [1] Daily Backup — ✓ success (1.2s, exit=0, attempt=1) [auto]
 
 # CLI output
 ▶ [1] Daily Backup [manual] run=260423-210030-a1f2
 ...
-✓ [success] Daily Backup (exit=0, 1234ms) [manual] run=260423-210030-a1f2
+✓ [success] Daily Backup (exit=0, 1.2s) [manual] run=260423-210030-a1f2
 ```
 
 ## Logs
 
 - Daemon log: `/opt/cronplus/logs/cronplus.log` (auto-rotated, configurable size & backup count)
-- Task logs: `/opt/cronplus/logs/task_{id}.json` (per-task, max 1000 entries)
+- Task logs: `/opt/cronplus/logs/task_{id}.json` (per-task JSONL, appended one line per run, rotated when the file exceeds the size limit)
+
+> Since 2.4.8 task logs are JSONL (one entry per line). Files in the old JSON-array
+> format are still read, and are migrated to JSONL on the first append. Appending is
+> a single `O_APPEND` write instead of "read everything → modify the array → rewrite
+> the file", so a busy task no longer rewrites its whole history on every run.
 
 ### Log Rotation
 
@@ -182,9 +212,29 @@ cronplus.log.1    Previous rotation
 cronplus.log.2    Older
 ```
 
+Task logs follow the same scheme, checked on write:
+
+```
+task_3.json       Current log (newest)
+task_3.json.1     Previous rotation
+task_3.json.2     Older
+```
+
+Rotated segments are still read by the log views, so rotation bounds the size of a
+single file without losing history. The WebUI fetches the newest 50 entries per
+task (`cronplus logs --all --per-task 50 --no-output`), so one chatty task can no
+longer push the other tasks' entries out of the list. `--no-output` keeps the list
+payload to summaries; a single entry's output is fetched with `--run-id` when it is
+expanded.
+
 Configurable via settings:
 - Max file size (1/5/10/20/50 MB)
 - Backup count (1/3/5/10)
+
+Output of a single run is capped at 256 KB. Over that, the first 64 KB and the end
+are kept, a `[cronplus] ---- output truncated ----` marker separates them, and a
+trailing `[cronplus] result: <status> (exit=<code>, <duration>)` line always records the
+verdict — so a truncated entry still tells you whether the run succeeded.
 
 ## Global Settings
 
@@ -200,6 +250,8 @@ Config file: `/opt/cronplus/settings.json`
   "defaultMaxRetries": 0,
   "defaultRetryInterval": 60,
   "logPageSize": 20,
+  "taskPageSize": 20,
+  "maxConcurrentTasks": 50,
   "logMaxBytes": 10485760,
   "logBackupCount": 5,
   "daemonLogLevel": "all",
@@ -210,13 +262,24 @@ Config file: `/opt/cronplus/settings.json`
 }
 ```
 
+| Setting | Meaning |
+| --- | --- |
+| `maxConcurrentTasks` | Daemon-wide concurrency ceiling (default 50); scheduled runs beyond it are skipped and logged |
+| `taskPageSize` | Tasks per page in the WebUI list (default 20) |
+| `logPageSize` | Log entries per page in the WebUI list (default 20) |
+
 ## Signals
 
 ```bash
-kill -HUP <pid>     Hot-reload config, clean up stuck tasks
+kill -HUP <pid>     Hot-reload config only (never interrupts running tasks)
 kill -TERM <pid>    Graceful shutdown
 kill -USR1 <pid>    Dump running status to log
+kill -USR2 <pid>    Terminate every running task
 ```
+
+> Before 2.4.8, `SIGHUP` killed every running task, so saving a task (which
+> hot-reloads) could kill work in progress. Reload and terminate are now separate
+> signals; saving a task in the WebUI only triggers a reload.
 
 ## Directory Structure
 

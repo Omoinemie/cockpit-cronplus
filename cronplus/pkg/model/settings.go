@@ -18,6 +18,7 @@ type Settings struct {
 	DaemonLogInterval    int    `json:"daemonLogInterval"`
 	DaemonLogMaxBytes    int    `json:"daemonLogMaxBytes"`
 	DaemonLogBackupCount int    `json:"daemonLogBackupCount"`
+	MaxConcurrentTasks   int    `json:"maxConcurrentTasks"`
 }
 
 // DefaultSettings returns settings with default values.
@@ -39,5 +40,6 @@ func DefaultSettings() Settings {
 		DaemonLogInterval:    2,
 		DaemonLogMaxBytes:    10 * 1024 * 1024,
 		DaemonLogBackupCount: 3,
+		MaxConcurrentTasks:   50,
 	}
 }

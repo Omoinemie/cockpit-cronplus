@@ -4,76 +4,74 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"os"
+	"os/user"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // DangerousEnvVars are environment variable keys that must never be set by user tasks.
 // Setting these could lead to privilege escalation, library injection, or security bypass.
 var dangerousEnvVars = map[string]bool{
-	"LD_PRELOAD":         true,
-	"LD_LIBRARY_PATH":    true,
-	"LD_AUDIT":           true,
-	"LD_DEBUG":           true,
-	"LD_ORIGIN":          true,
-	"LD_HWCAP_MASK":      true,
-	"LDSO_PRELOAD":       true,
-	"BASH_ENV":           true,
-	"ENV":                true,
-	"CDPATH":             true,
-	"GLOBIGNORE":         true,
-	"IFS":                true,
-	"FUNCNEST":           true,
-	"SHELLOPTS":          true,
-	"NODE_OPTIONS":       true,
-	"PYTHONPATH":         true,
-	"PYTHONSTARTUP":      true,
-	"PERL5OPT":           true,
-	"PERL5LIB":           true,
-	"RUBYOPT":            true,
-	"GEM_PATH":           true,
-	"JAVA_TOOL_OPTIONS":  true,
-	"_JAVA_OPTIONS":      true,
-	"CLASSPATH":          true,
-	"MANPATH":            true,
-	"INFOPATH":           true,
-	"XDG_CONFIG_HOME":    true,
-	"XDG_DATA_HOME":      true,
-	"HOSTALIASES":        true,
-	"LOCALDOMAIN":        true,
-	"RES_OPTIONS":        true,
-	"EDITOR":             true,
-	"VISUAL":             true,
-	"DISPLAY":            true,
-	"WAYLAND_DISPLAY":    true,
+	"LD_PRELOAD":               true,
+	"LD_LIBRARY_PATH":          true,
+	"LD_AUDIT":                 true,
+	"LD_DEBUG":                 true,
+	"LD_ORIGIN":                true,
+	"LD_HWCAP_MASK":            true,
+	"LDSO_PRELOAD":             true,
+	"BASH_ENV":                 true,
+	"PROMPT_COMMAND":           true,
+	"PS4":                      true,
+	"BASHOPTS":                 true,
+	"BASH_XTRACEFD":            true,
+	"ENV":                      true,
+	"CDPATH":                   true,
+	"GLOBIGNORE":               true,
+	"IFS":                      true,
+	"FUNCNEST":                 true,
+	"SHELLOPTS":                true,
+	"NODE_OPTIONS":             true,
+	"PYTHONPATH":               true,
+	"PYTHONSTARTUP":            true,
+	"PERL5OPT":                 true,
+	"PERL5LIB":                 true,
+	"RUBYOPT":                  true,
+	"GEM_PATH":                 true,
+	"JAVA_TOOL_OPTIONS":        true,
+	"_JAVA_OPTIONS":            true,
+	"CLASSPATH":                true,
+	"MANPATH":                  true,
+	"INFOPATH":                 true,
+	"XDG_CONFIG_HOME":          true,
+	"XDG_DATA_HOME":            true,
+	"HOSTALIASES":              true,
+	"LOCALDOMAIN":              true,
+	"RES_OPTIONS":              true,
+	"EDITOR":                   true,
+	"VISUAL":                   true,
+	"DISPLAY":                  true,
+	"WAYLAND_DISPLAY":          true,
 	"DBUS_SESSION_BUS_ADDRESS": true,
-	"XAUTHORITY":         true,
-	"SSH_AUTH_SOCK":      true,
-	"SSH_AGENT_PID":      true,
-	"GPG_AGENT_INFO":     true,
-	"KRB5_CONFIG":        true,
-	"KRB5CCNAME":         true,
-	"SYSTEMD_EDITOR":     true,
-	"PAGER":              true,
-	"LESSOPEN":           true,
-	"LESSCLOSE":          true,
-	"HTTP_PROXY":         true,
-	"HTTPS_PROXY":        true,
-	"ALL_PROXY":          true,
-	"NO_PROXY":           true,
-	"http_proxy":         true,
-	"https_proxy":        true,
-	"all_proxy":          true,
-	"no_proxy":           true,
-}
-
-// SafeEnvPrefixes are prefixes for env vars that are always allowed.
-var safeEnvPrefixes = []string{
-	"CRONPLUS_",  // app-specific vars
-	"MY_",        // common user prefix
-	"APP_",       // common user prefix
-	"SERVICE_",   // common service prefix
-	"TASK_",      // common task prefix
+	"XAUTHORITY":               true,
+	"SSH_AUTH_SOCK":            true,
+	"SSH_AGENT_PID":            true,
+	"GPG_AGENT_INFO":           true,
+	"KRB5_CONFIG":              true,
+	"KRB5CCNAME":               true,
+	"SYSTEMD_EDITOR":           true,
+	"PAGER":                    true,
+	"LESSOPEN":                 true,
+	"LESSCLOSE":                true,
+	"HTTP_PROXY":               true,
+	"HTTPS_PROXY":              true,
+	"ALL_PROXY":                true,
+	"NO_PROXY":                 true,
+	"http_proxy":               true,
+	"https_proxy":              true,
+	"all_proxy":                true,
+	"no_proxy":                 true,
 }
 
 // ValidatePathValue checks a PATH value for injection. It must be a colon
@@ -122,29 +120,20 @@ func SanitizeEnvVars(envVars map[string]string) (safe map[string]string, rejecte
 			rejected = append(rejected, k)
 			continue
 		}
-		if strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "SECRET") ||
-			strings.Contains(upper, "TOKEN") || strings.Contains(upper, "PRIVATE_KEY") {
+		// Credentials are deliberately allowed: a task that needs a database
+		// password has to put it *somewhere*, and blocking DB_PASSWORD only
+		// pushed users into writing it into the command line, which is worse.
+		// The dangerous entries above (loader hooks, PATH, interpreters'
+		// startup files) are the ones that can escalate privileges.
+		// Exported shell functions (BASH_FUNC_name%%) are code, not data: a
+		// task that calls `name` would execute whatever the variable carries.
+		if strings.HasPrefix(upper, "BASH_FUNC_") || strings.Contains(k, "%") {
 			rejected = append(rejected, k)
 			continue
 		}
-		allowed := false
-		for _, prefix := range safeEnvPrefixes {
-			if strings.HasPrefix(upper, prefix) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			safeCommon := map[string]bool{
-				"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "LC_MESSAGES": true,
-				"TZ": true, "TERM": true, "HOME": true, "USER": true, "LOGNAME": true,
-				"SHELL": true, "MAIL": true, "TMPDIR": true, "TMP": true, "TEMP": true,
-			}
-			if !safeCommon[upper] {
-				rejected = append(rejected, k)
-				continue
-			}
-		}
+		// Everything else is passed through. The old code kept a small
+		// allow-list and silently dropped DATABASE_URL, AWS_REGION, HTTP_* and
+		// friends, so tasks failed with no visible reason.
 		safe[k] = v
 	}
 	return safe, rejected
@@ -161,10 +150,66 @@ func DecodeCommand(cmd string) string {
 		return cmd
 	}
 	// Verify roundtrip
-	if base64.StdEncoding.EncodeToString(decoded) == cmd {
-		return string(decoded)
+	if base64.StdEncoding.EncodeToString(decoded) != cmd {
+		return cmd
 	}
-	return cmd
+	// The roundtrip alone is not enough: plenty of ordinary commands are also
+	// valid base64 ("date" -> "u\xab^", "true" -> "\xb6\xbb\x9e"). Decoding
+	// those turned a plain command into garbage that failed with "command not
+	// found". Only accept a decoding that is still text.
+	if !looksLikeText(string(decoded)) {
+		return cmd
+	}
+	return string(decoded)
+}
+
+// looksLikeText reports whether s is valid UTF-8 without control characters
+// other than tab/newline/carriage return.
+func looksLikeText(s string) bool {
+	if s == "" || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// BuildEnv merges the process environment with a task's variables, dropping
+// the ones that could be used to hijack the process. The rejected keys are
+// returned so the caller can surface them in the run log (silently dropping
+// DATABASE_URL made tasks fail with no visible reason).
+func BuildEnv(envVars map[string]string) (env []string, rejected []string) {
+	safe, rejected := SanitizeEnvVars(envVars)
+	env = os.Environ()
+	for k, v := range safe {
+		env = append(env, k+"="+v)
+	}
+	return env, rejected
+}
+
+// ExpandPathForUser expands a leading ~ to the home directory of the user the
+// task runs as. Using the daemon's own HOME expanded ~ to /root even when the
+// task ran as an unprivileged user, which made those tasks fail immediately.
+func ExpandPathForUser(path, runUser string) string {
+	if path == "" || !strings.HasPrefix(path, "~") {
+		return path
+	}
+	if runUser != "" && runUser != "root" {
+		// Only the target user's own home is correct here. Falling back to the
+		// daemon's HOME is what turned ~ into /root for unprivileged users.
+		u, err := user.Lookup(runUser)
+		if err != nil || u.HomeDir == "" {
+			return path
+		}
+		return u.HomeDir + strings.TrimPrefix(path, "~")
+	}
+	return "/root" + strings.TrimPrefix(path, "~")
 }
 
 // NewRunID generates a short human-readable run identifier.

@@ -117,6 +117,21 @@
                     <span data-i18n="task.noTasksHint">点击"添加任务"创建你的第一个 cron 任务</span>
                 </div>
             </div>
+            <div id="taskPagination" class="pagination-bar" style="display:none">
+                <div class="pagination-center">
+                    <div id="taskPaginationNav" class="pagination"></div>
+                    <div class="pagination-size">
+                        <label data-i18n="pagination.perPage">每页</label>
+                        <select id="taskPageSize" class="filter-input page-size-select">
+                            <option value="10">10</option>
+                            <option value="20" selected>20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                        <label data-i18n="pagination.entries">条</label>
+                    </div>
+                </div>
+            </div>
         </section>
 
         <!-- Logs Tab -->

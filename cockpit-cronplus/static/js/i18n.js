@@ -7,12 +7,18 @@ var I18n = (function () {
     var _cache = {};
 
     /**
-     * Detect preferred language: localStorage > browser navigator > fallback 'en'
+     * Detect preferred language:
+     *   saved choice > Cockpit session language > browser navigator > 'en'
+     *
+     * cockpit.language is the language the user picked in Cockpit itself. It
+     * was ignored, so someone using a Chinese Cockpit on an English browser
+     * got this plugin in English no matter what.
      */
     function detectLang() {
         var saved = localStorage.getItem('lang');
         if (saved) return saved;
-        var nav = (navigator.language || navigator.userLanguage || '').toLowerCase();
+        var ck = (window.cockpit && window.cockpit.language) ? String(window.cockpit.language) : '';
+        var nav = (ck || navigator.language || navigator.userLanguage || '').toLowerCase();
         if (nav.startsWith('zh')) return 'zh-CN';
         if (nav.startsWith('ja')) return 'ja';
         if (nav.startsWith('ko')) return 'ko';
@@ -54,10 +60,15 @@ var I18n = (function () {
     }
 
     function t(key, params) {
-        var text = _dict[key] || key;
+        // `|| key` treated an empty translation as missing. Some strings are
+        // deliberately empty — the English schedule preview reads "At sec 15"
+        // because its unit suffix is blank — so those keys rendered as the raw
+        // key name ("schedule.atSec15schedule.secUnit") instead.
+        var text = Object.prototype.hasOwnProperty.call(_dict, key) ? _dict[key] : key;
+        if (text === null || text === undefined) text = key;
         if (params) {
             Object.keys(params).forEach(function (k) {
-                text = text.replace('{' + k + '}', params[k]);
+                text = String(text).replace('{' + k + '}', params[k]);
             });
         }
         return text;

@@ -891,6 +891,14 @@ body {
 .badge svg { vertical-align: -1px; }
 .badge-info { background: rgba(108, 140, 255, 0.1); color: var(--accent); border-color: rgba(108, 140, 255, 0.3); }
 .badge-tags { background: rgba(251, 191, 36, 0.1); color: var(--warning); border-color: rgba(251, 191, 36, 0.3); }
+.badge-running {
+    background: rgba(52, 211, 153, 0.1); color: var(--success);
+    border-color: rgba(52, 211, 153, 0.35);
+}
+.badge-running .spinner-terminal {
+    width: 9px; height: 9px; border-width: 1.5px;
+    border-color: rgba(52, 211, 153, 0.3); border-top-color: var(--success);
+}
 .running-badge { color: var(--success); font-size: 12px; font-weight: 500; }
 
 /* ===== Toggle Label ===== */

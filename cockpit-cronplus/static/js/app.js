@@ -1,8 +1,8 @@
 /**
- * Cockpit Cronplus v1.1.8 — Main Application
+ * Cockpit Cronplus — Main Application
  * Direct file management via cockpit.spawn — no HTTP API.
  * Config: /opt/cronplus/tasks.conf (JSON array)
- * Logs:   /opt/cronplus/logs/logs.json (JSON array)
+ * Logs:   /opt/cronplus/logs/task_{id}.json (JSONL, one entry per line)
  */
 (function () {
     'use strict';
@@ -41,11 +41,29 @@
     var interactionTimer = null;
     var logPage = 1;
     var LOG_PAGE_SIZE = 20;
+    var taskPage = 1;
+    var TASK_PAGE_SIZE = 20;
+    // taskID -> RunningInfo from `cronplus ps --json`
+    var runningTasks = {};
+    // Task filter of the log view. Kept in a variable instead of only in the
+    // <select>: a task without any log entry has no <option> yet, and assigning
+    // such a value to a <select> silently resets it to "", which made the log
+    // view fall back to "all logs" instead of "this task has no logs".
+    var logFilterTaskId = '';
+    // Entries fetched per task. A single global limit (the old `-n 1000`) is
+    // shared by every task, so one frequently scheduled task could fill it and
+    // leave the others with a couple of entries.
+    var LOG_FETCH_PER_TASK = 50;
+    var LOG_FETCH_MAX = 5000;
+    // Deeper history for the single task whose log view is open.
+    var LOG_TASK_FETCH = 500;
     var appSettings = {};  // loaded from settings.json
     var runningProc = null;  // currently running cockpit.spawn process for task execution
-    var runStartTime = 0;    // timestamp when current run started
+    // Per-run state object. The spawn callbacks must not read a global start
+    // stamp: it is reset when the modal closes, which made a finished run
+    // subtract from zero and store Date.now() (~1.79e12) as its duration.
+    var activeRun = null;
     var runDurationTimer = null; // duration update timer
-    var runTimeoutTimer = null;  // timeout timer
     var pendingRunTask = null;   // task object waiting in the output modal
     var currentRunID = null;     // run ID for current execution
 
@@ -71,6 +89,7 @@
         await loadUser();
         await loadTasks();
         await loadLogs();
+        await loadRunning();
         renderTasks();
         renderLogs();
         startAutoRefresh();
@@ -79,7 +98,10 @@
 
     // ===== Settings =====
     var SETTINGS_DEFAULTS = {
-        language: 'en',
+        // Empty means "not chosen yet": the UI then follows the language
+        // Cockpit/the browser asked for. Defaulting to 'en' made a Chinese UI
+        // show "English" in this dropdown.
+        language: '',
         theme: 'auto',
         autoRefreshInterval: 15,
         logMaxBytes: 10485760,
@@ -116,6 +138,18 @@
         }
         // Apply log page size
         LOG_PAGE_SIZE = appSettings.logPageSize || 20;
+        // Apply task page size (previously read by nothing: the task list always
+        // rendered every task, so the setting was a no-op)
+        TASK_PAGE_SIZE = appSettings.taskPageSize || 20;
+        var tpsEl = $('#taskPageSize');
+        if (tpsEl) {
+            var tps = String(TASK_PAGE_SIZE);
+            var hasOpt = false;
+            for (var i = 0; i < tpsEl.options.length; i++) {
+                if (tpsEl.options[i].value === tps) { hasOpt = true; break; }
+            }
+            if (hasOpt) tpsEl.value = tps;
+        }
         // Apply theme (if not auto, override)
         if (appSettings.theme && appSettings.theme !== 'auto') {
             Theme.apply(appSettings.theme);
@@ -137,7 +171,10 @@
 
     function openSettingsModal() {
         var s = appSettings;
-        $('#setLanguage').value = s.language || 'en';
+        // Show the language that is actually in effect, not the settings
+        // default: with no saved settings the dropdown said "English" while
+        // the UI was running in Chinese, and saving would then flip it.
+        $('#setLanguage').value = s.language || I18n.getLang() || 'en';
         $('#setTheme').value = s.theme || 'auto';
         $('#setDefaultUser').value = s.defaultRunUser || 'root';
         $('#setDefaultTimeout').value = s.defaultTimeout || 0;
@@ -180,6 +217,10 @@
             defaultRetryInterval: parseInt($('#setDefaultRetryInterval').value) || 60,
             autoRefreshInterval: parseInt($('#setAutoRefresh').value) || 15,
             logPageSize: parseInt($('#setLogPageSize').value) || 20,
+            // Carried over untouched: the form has no field for it, and the old
+            // code simply dropped the key, deleting the user's value on every
+            // save (the whole file is rewritten).
+            taskPageSize: appSettings.taskPageSize || 20,
             logMaxBytes: parseInt($('#setLogMaxBytes').value) || 10485760,
             logBackupCount: parseInt($('#setLogBackupCount').value) || 5,
             daemonLogLevel: $('#setDaemonLogLevel').value || 'all',
@@ -211,7 +252,9 @@
 
             // Re-render with new page size
             logPage = 1;
+            taskPage = 1;
             renderLogs();
+            renderTasks();
         } catch (e) {
             showToast(I18n.t('settings.saveFailed'), 'error');
         }
@@ -289,9 +332,13 @@
         // Highlight PID numbers — dim cyan
         safe = safe.replace(/\b(pid[=: ]*\d+)\b/gi,
             '<span class="hl-pid">$1</span>');
-        // Highlight duration — purple
-        safe = safe.replace(/\((\d+ms)\)/g,
-            '(<span class="hl-duration">$1</span>)');
+        // Highlight duration — purple. Durations render as 850ms / 4.2s / 1m 07s
+        // / 2h 05m / 3d 04h, so match all of them (the old pattern only knew
+        // about the raw "<n>ms" form).
+        safe = safe.replace(/(,\s*)(\d+(?:\.\d+)?(?:ms|s)|\d+m \d+s|\d+h \d+m|\d+d \d+h)(?=\))/g,
+            '$1<span class="hl-duration">$2</span>');
+        safe = safe.replace(/\b(duration=)(\S+)/gi,
+            '$1<span class="hl-duration">$2</span>');
         // Highlight attempt — dim
         safe = safe.replace(/\b(attempt[=: ]*\d+)\b/gi,
             '<span class="hl-attempt">$1</span>');
@@ -464,6 +511,7 @@
         try {
             await loadTasks();
             await loadLogs();
+            await loadRunning();
             var activeTab = document.querySelector('.tab.active');
             if (activeTab) {
                 if (activeTab.dataset.tab === 'tasks') renderTasks();
@@ -568,13 +616,58 @@
 
     async function loadLogs() {
         try {
+            // --no-output: a full page of entries used to ship every run's output
+            // (up to 256KB each) to the browser — tens of MB per refresh on a
+            // busy host. The output of one entry is now fetched when it is
+            // expanded.
             var raw = await cockpit.spawn(
-                ['cronplus', 'logs', '--all', '--json', '-n', '1000'],
+                ['cronplus', 'logs', '--all', '--json', '--no-output',
+                 '--per-task', String(LOG_FETCH_PER_TASK), '-n', String(LOG_FETCH_MAX)],
                 { err: 'message', environ: ['LC_ALL=C'] }
             );
             logs = JSON.parse(raw || '[]') || [];
             if (!Array.isArray(logs)) logs = [];
+            logs.forEach(function (l) { l._outputLoaded = false; });
         } catch (e) { logs = []; }
+    }
+
+    // Load one task's full history (deeper than the global window) and merge it
+    // into the cache, replacing whatever entries that task had.
+    async function loadTaskLogs(taskId) {
+        try {
+            var raw = await cockpit.spawn(
+                ['cronplus', 'logs', String(taskId), '--json', '--no-output', '-n', String(LOG_TASK_FETCH)],
+                { err: 'message', environ: ['LC_ALL=C'] }
+            );
+            var entries = JSON.parse(raw || '[]');
+            if (!Array.isArray(entries)) return;
+            entries.forEach(function (l) { l._outputLoaded = false; });
+            logs = logs.filter(function (l) { return String(l.task_id) !== String(taskId); }).concat(entries);
+        } catch (e) { /* keep the cached entries */ }
+    }
+
+    // Which tasks the daemon is executing right now.
+    //
+    // The daemon has answered `ps` on its control socket since the ps/stop work,
+    // but the UI never asked: a running task looked exactly like an idle one and
+    // there was no way to stop a runaway job from the browser.
+    async function loadRunning() {
+        try {
+            var raw = await cockpit.spawn(
+                ['cronplus', 'ps', '--json'],
+                { err: 'message', environ: ['LC_ALL=C'] }
+            );
+            var list = JSON.parse(raw || '[]');
+            var map = {};
+            if (Array.isArray(list)) {
+                list.forEach(function (r) { if (r && r.task_id) map[r.task_id] = r; });
+            }
+            runningTasks = map;
+        } catch (e) {
+            // Daemon down / old CLI without `ps`: treat everything as idle
+            // rather than leaving a stale "running" badge on screen.
+            runningTasks = {};
+        }
     }
 
     // ===== Last Run Info (time + status) =====
@@ -641,11 +734,22 @@
                 (search ? I18n.t('task.noMatch') : I18n.t('task.noTasks')) + '</p>' +
                 '<span data-i18n="' + (search ? 'task.noMatchHint' : 'task.noTasksHint') + '">' +
                 (search ? I18n.t('task.noMatchHint') : I18n.t('task.noTasksHint')) + '</span></div>';
+            renderTaskPagination(0);
             return;
         }
 
-        container.innerHTML = filtered.map(function (task) {
+        // Paging. settings.taskPageSize existed (and was editable in the
+        // Settings dialog) but rendered nothing: every task was always drawn.
+        var totalPages = Math.max(1, Math.ceil(filtered.length / TASK_PAGE_SIZE));
+        if (taskPage > totalPages) taskPage = totalPages;
+        if (taskPage < 1) taskPage = 1;
+        renderTaskPagination(totalPages);
+        var pageStart = (taskPage - 1) * TASK_PAGE_SIZE;
+        var pageItems = filtered.slice(pageStart, pageStart + TASK_PAGE_SIZE);
+
+        container.innerHTML = pageItems.map(function (task) {
             var idx = tasks.indexOf(task);
+            var runInfo = runningTasks[task.id] || null;
             var cmdDisplay = (task.command || '');
             var firstLine = cmdDisplay.split('\n')[0];
             var hasMultipleLines = cmdDisplay.indexOf('\n') >= 0;
@@ -688,6 +792,11 @@
             if (task.max_concurrent > 1) params += '<span class="badge badge-info">×' + task.max_concurrent + '</span>';
             if (task.max_runs > 0) params += '<span class="badge badge-info">' + (task.run_count || 0) + '/' + task.max_runs + '</span>';
             if (task.kill_previous) params += '<span class="badge badge-info">kill</span>';
+            if (runInfo) {
+                params += '<span class="badge badge-running" title="pid ' + Utils.escHtml(runInfo.pid) + '">' +
+                    '<span class="spinner-terminal"></span> ' +
+                    I18n.t('output.executing') + (runInfo.pid ? ' (pid ' + Utils.escHtml(runInfo.pid) + ')' : '') + '</span>';
+            }
 
             // Row 5: tags
             var tagsRow = '';
@@ -746,9 +855,13 @@
                 tagsRow +
                 '</div>' +
                 '<div class="task-actions">' +
-                '<button class="btn btn-sm btn-secondary" data-action="run" data-index="' + idx + '" data-i18n-title="btn.run">' +
-                '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>' +
-                '<span data-i18n="btn.run">' + I18n.t('btn.run') + '</span></button>' +
+                (runInfo
+                    ? '<button class="btn btn-sm btn-danger" data-action="stop" data-index="' + idx + '" data-i18n-title="btn.stop">' +
+                      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14"/></svg>' +
+                      '<span data-i18n="btn.stop">' + I18n.t('btn.stop') + '</span></button>'
+                    : '<button class="btn btn-sm btn-secondary" data-action="run" data-index="' + idx + '" data-i18n-title="btn.run">' +
+                      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>' +
+                      '<span data-i18n="btn.run">' + I18n.t('btn.run') + '</span></button>') +
                 '<button class="btn btn-sm btn-log" data-action="logs" data-index="' + idx + '" data-i18n-title="btn.logs">' +
                 '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
                 '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
@@ -763,9 +876,9 @@
     }
 
     // ===== Render Logs =====
-    function renderLogs(filterCommand) {
+    function renderLogs() {
         var container = $('#logList');
-        var filterTask = filterCommand || ($('#logFilterTask')?.value || '');
+        var filterTask = logFilterTaskId;
         var filterStatus = $('#logFilterStatus')?.value || '';
         var filterUser = $('#logFilterUser')?.value || '';
         var filterTrigger = $('#logFilterTrigger')?.value || '';
@@ -780,7 +893,7 @@
         }
 
         var filtered = logs.filter(function (l) {
-            if (filterTask && String(l.task_id) !== String(filterTask) && l.command !== filterTask) return false;
+            if (filterTask && String(l.task_id) !== String(filterTask)) return false;
             if (filterStatus && l.status !== filterStatus) return false;
             if (filterUser && (l.run_user || 'root') !== filterUser) return false;
             if (filterTrigger && (l.trigger || 'auto') !== filterTrigger) return false;
@@ -794,21 +907,37 @@
 
         filtered.sort(function (a, b) { return (b.created_at || '').localeCompare(a.created_at || ''); });
 
-        // Populate task filter dropdown
+        // Populate task filter dropdown.
+        // Options come from the configured tasks, not from the log entries: a
+        // task that never ran has no entry and therefore no option, and a
+        // <select> whose value has no matching option resets itself to "" — the
+        // reason clicking "logs" on a never-run task showed every task's logs.
         var taskFilter = $('#logFilterTask');
-        if (taskFilter && !filterCommand) {
-            var seen = {};
-            var currentVal = taskFilter.value;
-            taskFilter.innerHTML = '<option value="">' + I18n.t('log.filter.allTasks') + '</option>';
-            logs.forEach(function (l) {
-                var key = l.task_id || l.command;
-                if (!seen[key]) {
-                    seen[key] = true;
-                    var label = '#' + (l.task_id || '?') + ' ' + (l.title || (l.command || '').slice(0, 50));
-                    taskFilter.innerHTML += '<option value="' + Utils.escHtml(String(l.task_id || '')) + '">' + Utils.escHtml(label) + '</option>';
-                }
+        if (taskFilter) {
+            var knownIds = {};
+            var taskOptions = [];
+            tasks.forEach(function (t) {
+                if (t.id === undefined || t.id === null || t.id === '') return;
+                var id = String(t.id);
+                knownIds[id] = true;
+                taskOptions.push({ id: id, label: '#' + id + ' ' + (t.title || (t.command || '').slice(0, 50)) });
             });
-            taskFilter.value = currentVal;
+            logs.forEach(function (l) {
+                var id = String(l.task_id || '');
+                if (!id || knownIds[id]) return;
+                knownIds[id] = true;
+                taskOptions.push({ id: id, label: '#' + id + ' ' + (l.title || (l.command || '').slice(0, 50)) });
+            });
+            if (logFilterTaskId && !knownIds[logFilterTaskId]) {
+                // Task was deleted (or comes from another host) — keep the selection usable.
+                taskOptions.push({ id: logFilterTaskId, label: '#' + logFilterTaskId });
+            }
+            var taskOptionsHtml = '<option value="">' + I18n.t('log.filter.allTasks') + '</option>';
+            taskOptions.forEach(function (o) {
+                taskOptionsHtml += '<option value="' + Utils.escHtml(o.id) + '">' + Utils.escHtml(o.label) + '</option>';
+            });
+            taskFilter.innerHTML = taskOptionsHtml;
+            taskFilter.value = logFilterTaskId || '';
         }
 
         // Populate user filter dropdown
@@ -843,17 +972,25 @@
         var pageItems = filtered.slice(startIdx, startIdx + LOG_PAGE_SIZE);
 
         if (filtered.length === 0) {
+            // "This task never ran" is a different situation from "nothing
+            // matches your filters" — say which one it is.
+            var onlyTaskFilter = !!filterTask && !filterStatus && !filterUser && !filterTrigger && !dateFrom && !dateTo;
+            var titleKey = onlyTaskFilter ? 'log.noTaskLogs' : (hasFilter ? 'log.noMatch' : 'log.noLogs');
+            var hintKey = onlyTaskFilter ? 'log.noTaskLogsHint' : (hasFilter ? 'log.noMatchHint' : 'log.noLogsHint');
             container.innerHTML =
                 '<div class="empty-state">' +
                 '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' +
                 '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
-                '<p>' + (hasFilter ? I18n.t('log.noMatch') : I18n.t('log.noLogs')) + '</p>' +
-                '<span>' + (hasFilter ? I18n.t('log.noMatchHint') : I18n.t('log.noLogsHint')) + '</span></div>';
+                '<p>' + I18n.t(titleKey) + '</p>' +
+                '<span>' + I18n.t(hintKey) + '</span></div>';
         } else {
             container.innerHTML = pageItems.map(function (log, i) {
                 var globalIdx = startIdx + i;
                 var statusLabel = log.status === 'success' ? I18n.t('log.filter.success') : I18n.t('log.filter.error');
-                var durationLabel = log.duration ? log.duration + 'ms' : '';
+                // Durations are stored in ms; render them the way a person reads
+                // them. Implausible values (a timestamp written by an old bug)
+                // render as nothing rather than "1793262922261ms".
+                var durationLabel = Utils.formatDuration(log.duration);
                 var attemptLabel = log.attempt > 1 ? ' (retry #' + log.attempt + ')' : '';
                 var triggerLabel = log.trigger === 'manual' ? I18n.t('log.filter.manual') : I18n.t('log.filter.auto');
                 var triggerClass = log.trigger === 'manual' ? 'trigger-manual' : 'trigger-auto';
@@ -869,6 +1006,9 @@
                     '<span class="log-user"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> ' + Utils.escHtml(log.run_user || 'root') + '</span>' +
                     '<span class="log-trigger ' + triggerClass + '">' + triggerLabel + '</span>' +
                     '<span class="log-status-label ' + log.status + '">' + statusLabel + attemptLabel + '</span>' +
+                    // Exit code stays visible even when the output was truncated.
+                    (log.exit_code !== undefined && log.exit_code !== null ?
+                        '<span class="log-exit-code">exit ' + Utils.escHtml(String(log.exit_code)) + '</span>' : '') +
                     (durationLabel ? '<span class="log-duration"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ' + durationLabel + '</span>' : '') +
                     '</div>' +
                     '<div class="log-detail-bar">' +
@@ -879,8 +1019,12 @@
                     '<div class="log-cmd-bar"><span class="log-cmd-label" data-i18n="log.cmdLabel">' + I18n.t('log.cmdLabel') + '</span>' +
                     '<code class="log-cmd-text">' + Utils.escHtml(log.command || '') + '</code>' +
                     '<button class="btn-copy" data-copy-text="' + Utils.escHtml(log.command || '') + '" title="' + I18n.t('btn.copy') + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> ' + I18n.t('btn.copy') + '</button></div>' +
-                    (hasOutput ? '<div class="log-output-wrapper"><div class="log-output">' + colorizeOutput(log.output) + '</div>' +
-                        '<button class="btn-copy" data-copy-text="' + Utils.escHtml(log.output) + '" title="' + I18n.t('btn.copy') + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> ' + I18n.t('btn.copy') + '</button></div>' : '') +
+                    // Output is not part of the list payload; it is injected by
+                    // loadLogOutput() the first time the entry is expanded.
+                    '<div class="log-output-wrapper">' +
+                    '<div class="log-output" data-run-id="' + Utils.escHtml(log.run_id || '') + '"' +
+                    ' data-task-id="' + (log.task_id || '') + '" data-loaded="0"></div>' +
+                    '<button class="btn-copy" data-copy-text="" title="' + I18n.t('btn.copy') + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> ' + I18n.t('btn.copy') + '</button></div>' +
                     '</div></div>' +
                     '</div></div>';
             }).join('');
@@ -888,37 +1032,79 @@
 
         var paginationBar = $('#logPagination');
         if (paginationBar) paginationBar.style.display = filtered.length > 0 ? '' : 'none';
-        var pageSizeWrap = document.querySelector('.pagination-size');
+        // Scoped to the log pagination bar: there is a second .pagination-size in
+        // the task list, and document.querySelector would have picked that one.
+        var pageSizeWrap = document.querySelector('#logPagination .pagination-size');
         if (pageSizeWrap) pageSizeWrap.style.display = filtered.length >= LOG_PAGE_SIZE ? '' : 'none';
 
         renderPagination(totalPages);
     }
 
-    function renderPagination(totalPages) {
-        var el = $('#logPaginationNav');
-        if (!el) return;
-        if (totalPages <= 1) { el.innerHTML = ''; return; }
+    // Fetches the output of a single entry. The list request no longer carries
+    // outputs, so this is the only place a full log body travels to the browser.
+    function loadLogOutput(entryEl) {
+        var box = entryEl.querySelector('.log-output');
+        if (!box || box.dataset.loaded === '1') return;
+        var runId = box.dataset.runId || '';
+        if (!runId) { box.dataset.loaded = '1'; return; }
 
+        box.dataset.loaded = '1';
+        box.textContent = '\u2026';
+
+        var args = ['cronplus', 'logs'];
+        if (box.dataset.taskId) args.push(String(box.dataset.taskId));
+        args.push('--json', '--run-id', runId, '-n', '1');
+
+        cockpit.spawn(args, { err: 'message', environ: ['LC_ALL=C'] }).then(function (raw) {
+            var arr = JSON.parse(raw || '[]') || [];
+            var item = Array.isArray(arr) ? arr[0] : null;
+            var output = (item && item.output) || '';
+            box.innerHTML = output ? colorizeOutput(output) : '';
+            var copyBtn = entryEl.querySelector('.log-output-wrapper .btn-copy');
+            if (copyBtn) copyBtn.setAttribute('data-copy-text', output);
+        }).catch(function () {
+            box.dataset.loaded = '0';
+            box.textContent = '';
+        });
+    }
+
+    // Builds pager markup for one list. Shared by the task list and the log
+    // list so both behave (and look) the same.
+    function paginationHtml(page, totalPages) {
         var html = '';
-        html += '<button class="page-btn page-btn-text" data-page="1"' + (logPage <= 1 ? ' disabled' : '') + '>' + I18n.t('pagination.first') + '</button>';
-        html += '<button class="page-btn page-btn-text" data-page="' + (logPage - 1) + '"' + (logPage <= 1 ? ' disabled' : '') + '>' + I18n.t('pagination.prev') + '</button>';
-        var start = Math.max(1, logPage - 3);
-        var end = Math.min(totalPages, logPage + 3);
+        html += '<button class="page-btn page-btn-text" data-page="1"' + (page <= 1 ? ' disabled' : '') + '>' + I18n.t('pagination.first') + '</button>';
+        html += '<button class="page-btn page-btn-text" data-page="' + (page - 1) + '"' + (page <= 1 ? ' disabled' : '') + '>' + I18n.t('pagination.prev') + '</button>';
+        var start = Math.max(1, page - 3);
+        var end = Math.min(totalPages, page + 3);
         if (start > 1) {
             html += '<button class="page-btn" data-page="1">1</button>';
             if (start > 2) html += '<span class="page-ellipsis">\u2026</span>';
         }
         for (var p = start; p <= end; p++) {
-            html += '<button class="page-btn' + (p === logPage ? ' active' : '') + '" data-page="' + p + '">' + p + '</button>';
+            html += '<button class="page-btn' + (p === page ? ' active' : '') + '" data-page="' + p + '">' + p + '</button>';
         }
         if (end < totalPages) {
             if (end < totalPages - 1) html += '<span class="page-ellipsis">\u2026</span>';
             html += '<button class="page-btn" data-page="' + totalPages + '">' + totalPages + '</button>';
         }
-        html += '<button class="page-btn page-btn-text" data-page="' + (logPage + 1) + '"' + (logPage >= totalPages ? ' disabled' : '') + '>' + I18n.t('pagination.next') + '</button>';
-        html += '<button class="page-btn page-btn-text" data-page="' + totalPages + '"' + (logPage >= totalPages ? ' disabled' : '') + '>' + I18n.t('pagination.last') + '</button>';
-        html += '<span class="page-info">' + I18n.t('pagination.pageInfo', { current: logPage, total: totalPages }) + '</span>';
-        el.innerHTML = html;
+        html += '<button class="page-btn page-btn-text" data-page="' + (page + 1) + '"' + (page >= totalPages ? ' disabled' : '') + '>' + I18n.t('pagination.next') + '</button>';
+        html += '<button class="page-btn page-btn-text" data-page="' + totalPages + '"' + (page >= totalPages ? ' disabled' : '') + '>' + I18n.t('pagination.last') + '</button>';
+        html += '<span class="page-info">' + I18n.t('pagination.pageInfo', { current: page, total: totalPages }) + '</span>';
+        return html;
+    }
+
+    function renderPagination(totalPages) {
+        var el = $('#logPaginationNav');
+        if (!el) return;
+        el.innerHTML = totalPages <= 1 ? '' : paginationHtml(logPage, totalPages);
+    }
+
+    function renderTaskPagination(totalPages) {
+        var nav = $('#taskPaginationNav');
+        if (!nav) return;
+        var wrap = $('#taskPagination');
+        if (wrap) wrap.style.display = totalPages > 1 ? '' : 'none';
+        nav.innerHTML = totalPages <= 1 ? '' : paginationHtml(taskPage, totalPages);
     }
 
     // ===== Log Output Colorizer =====
@@ -959,6 +1145,22 @@
         showOutputModal(task.command, task.run_user || 'root');
     }
 
+    // Stops every running instance of a task through the daemon's control
+    // socket, then refreshes the running map so the button flips back.
+    async function stopTask(index) {
+        var task = tasks[index];
+        if (!task || !task.id) return;
+        try {
+            await Utils.spawn('cronplus', ['stop', String(task.id)]);
+            showToast(I18n.t('toast.stopped'), 'success');
+        } catch (err) {
+            showToast(I18n.t('toast.stopFailed') + ': ' + (err.message || err), 'error');
+        }
+        await loadRunning();
+        renderTasks();
+        loadLogs().then(function () { renderLogs(); });
+    }
+
     function startRunOutput() {
         var task = pendingRunTask;
         if (!task) return;
@@ -969,7 +1171,11 @@
         var btn = $('#btnRunStopOutput');
 
         outputEl.textContent = '';
-        runStartTime = Date.now();
+        // One object per run: its start stamp and whether the user stopped it.
+        // Closures capture it, so a run that finishes after the modal was closed
+        // (or after another run started) still reports its own duration.
+        var thisRun = { startedAt: Date.now(), stopped: false };
+        activeRun = thisRun;
 
         var stdinBar = $('#stdinBar');
         if (stdinBar) stdinBar.style.display = 'flex';
@@ -978,7 +1184,7 @@
 
         // Update UI: running state
         statusEl.className = 'terminal-status running';
-        statusEl.innerHTML = '<span class="spinner-terminal"></span> <span class="run-id">' + currentRunID + '</span> <span>' + I18n.t('output.executing') + '</span> <span class="trigger-badge-manual">[manual]</span>';
+        statusEl.innerHTML = '<span class="spinner-terminal"></span> <span class="run-id">' + Utils.escHtml(currentRunID || '') + '</span> <span>' + I18n.t('output.executing') + '</span> <span class="trigger-badge-manual">[manual]</span>';
         btn.textContent = I18n.t('btn.stop');
         btn.className = 'btn btn-danger btn-sm';
         $('#btnCopyOutput').title = I18n.t('btn.copyOutput');
@@ -986,87 +1192,110 @@
 
         // Duration timer
         runDurationTimer = setInterval(function () {
-            if (runStartTime) {
-                var elapsed = ((Date.now() - runStartTime) / 1000).toFixed(1);
-                durationEl.textContent = elapsed + 's';
-            }
+            var elapsed = (Date.now() - thisRun.startedAt) / 1000;
+            durationEl.textContent = elapsed.toFixed(1) + 's';
         }, 100);
 
-        // Build the shell command
         var command = task.command || '';
-        var shellCmd;
-        if (task.run_user && task.run_user !== 'root') {
-            shellCmd = ['su', '-', task.run_user, '-c', command];
-        } else {
-            shellCmd = ['bash', '-c', command];
-        }
 
+        // Run through the CLI, not through a shell of our own.
+        //
+        // This used to do `cockpit.spawn(['bash','-c',command])` and then write
+        // the log entry from JavaScript (JSON.stringify + jq/embedded Python).
+        // Three things were wrong with that: the entry was built by a second,
+        // divergent code path (different truncation, different env allow-list,
+        // no result summary), the run never appeared in `cronplus ps` and so
+        // escaped the concurrency limit, and `su - <user> -c` here disagreed
+        // with the daemon's own invocation. `cronplus run <id>` uses the exact
+        // same executor and writes exactly one log entry.
+        var args = ['cronplus', 'run', String(task.id)];
         var spawnOpts = { err: 'out', environ: ['LC_ALL=C'] };
-        if (task.cwd) spawnOpts.directory = task.cwd;
 
         try {
-            var proc = cockpit.spawn(shellCmd, spawnOpts);
+            var proc = cockpit.spawn(args, spawnOpts);
             runningProc = proc;
 
+            // The CLI prints its own run id on the first line; pick it up so the
+            // header shows the same id that ends up in the log.
+            var banner = '';
             proc.stream(function (data) {
+                if (!thisRun.runID && banner.length < 512) {
+                    banner += data;
+                    var m = /run=(#?\S+)/.exec(banner);
+                    if (m) {
+                        thisRun.runID = m[1];
+                        var idEl = statusEl.querySelector('.run-id');
+                        if (idEl) idEl.textContent = m[1];
+                    }
+                }
                 outputEl.textContent += data;
                 outputEl.scrollTop = outputEl.scrollHeight;
             });
 
-            // Timeout handling
-            if (task.timeout > 0) {
-                runTimeoutTimer = setTimeout(function () {
-                    if (runningProc) {
-                        outputEl.textContent += '\n[cronplus] timeout (' + task.timeout + 's), terminating...\n';
-                        try { runningProc.close('kill'); } catch (e) { /* */ }
-                    }
-                }, task.timeout * 1000);
+            // Single exit path. Timeout and cancellation are handled inside the
+            // CLI (same executor as the daemon), so there is no second timer
+            // here racing against it.
+            function settle(ok, err) {
+                var elapsed = Date.now() - thisRun.startedAt;
+                var status = ok ? 'success' : 'error';
+                var exitCode = ok ? 0 : (err && typeof err.exit_status === 'number' ? err.exit_status : -1);
+                if (thisRun.stopped) {
+                    status = 'error';
+                    if (exitCode === 0 || exitCode === undefined) exitCode = -1;
+                }
+                finishRun(task, command, status, exitCode, elapsed, thisRun);
             }
 
             proc.then(function () {
-                finishRun(task, command, 'success', outputEl.textContent.slice(0, 50000), 0);
+                settle(true);
             }, function (err) {
-                var exitCode = err && err.exit_status ? err.exit_status : -1;
-                finishRun(task, command, 'error', outputEl.textContent.slice(0, 50000), exitCode);
+                settle(false, err);
             });
         } catch (err) {
-            finishRun(task, command, 'error', err.message || err.toString(), -1);
+            finishRun(task, command, 'error', -1, Date.now() - thisRun.startedAt, thisRun);
         }
     }
 
+    // Ask the run to stop.
+    //
+    // "terminate" (SIGTERM), not "kill" (SIGKILL): the CLI traps SIGTERM, kills
+    // the task's whole process group and still writes the log entry, so a
+    // stopped manual run is recorded once with exit=-1 instead of vanishing
+    // from the history. SIGKILL left an entry-less run and could orphan the
+    // task's children.
     function stopRunOutput() {
-        if (runningProc) {
-            try { runningProc.close('kill'); } catch (e) { /* */ }
-            runningProc = null;
-        }
-        if (runTimeoutTimer) { clearTimeout(runTimeoutTimer); runTimeoutTimer = null; }
-        if (runDurationTimer) { clearInterval(runDurationTimer); runDurationTimer = null; }
-
-        var stdinBar = $('#stdinBar');
-        if (stdinBar) stdinBar.style.display = 'none';
+        if (!runningProc) return;
+        if (activeRun) activeRun.stopped = true;
+        try { runningProc.close('terminate'); } catch (e) { /* */ }
 
         var statusEl = $('#outputStatus');
-        var durationEl = $('#outputDuration');
         var btn = $('#btnRunStopOutput');
-        var duration = Date.now() - runStartTime;
-
-        statusEl.className = 'terminal-status error';
-        statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span class="status-icon-fail">' + SVG_X + '</span> <span>' + I18n.t('btn.stop') + '</span>';
-        durationEl.textContent = (duration / 1000).toFixed(1) + 's';
-        btn.textContent = I18n.t('btn.run');
-        btn.className = 'btn btn-primary btn-sm';
-
-        var task = pendingRunTask;
-        if (task) writeRunLog(task, task.command || '', 'error', '[cronplus] stopped by user', duration, -1);
-        loadLogs().then(function () { renderTasks(); });
+        if (statusEl) {
+            statusEl.className = 'terminal-status running';
+            statusEl.innerHTML = '<span class="spinner-terminal"></span> <span class="run-id">' + Utils.escHtml(activeRun && activeRun.runID ? activeRun.runID : (currentRunID || '')) + '</span> <span>' + I18n.t('btn.stop') + '...</span>';
+        }
+        if (btn) btn.className = 'btn btn-primary btn-sm';
     }
 
-    function finishRun(task, command, status, output, exitCode) {
-        if (runTimeoutTimer) { clearTimeout(runTimeoutTimer); runTimeoutTimer = null; }
-        if (runDurationTimer) { clearInterval(runDurationTimer); runDurationTimer = null; }
+    // runToken is the per-run state object created by startRunOutput. A run that
+    // was abandoned (modal closed) or replaced (another run started) must not
+    // touch the UI state of the current run.
+    //
+    // The log entry is written by `cronplus run` itself, so there is nothing to
+    // persist here — we only refresh the list so the new entry shows up.
+    function finishRun(task, command, status, exitCode, durationMs, runToken) {
+        var superseded = !!(runToken && activeRun && activeRun !== runToken);
+        var elapsed = typeof durationMs === 'number' && isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : 0;
 
-        var duration = Date.now() - runStartTime;
+        if (superseded) {
+            loadLogs().then(function () { renderTasks(); });
+            return;
+        }
+
+        if (runDurationTimer) { clearInterval(runDurationTimer); runDurationTimer = null; }
         runningProc = null;
+        var shownID = (runToken && runToken.runID) ? runToken.runID : (currentRunID || '');
+        activeRun = null;
 
         var stdinBar = $('#stdinBar');
         if (stdinBar) stdinBar.style.display = 'none';
@@ -1075,22 +1304,25 @@
         var durationEl = $('#outputDuration');
         var btn = $('#btnRunStopOutput');
 
-        durationEl.textContent = (duration / 1000).toFixed(1) + 's';
+        if (durationEl) durationEl.textContent = Utils.formatDuration(elapsed) || '0ms';
 
-        if (status === 'success') {
-            statusEl.className = 'terminal-status success';
-            statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span class="status-icon-ok">' + SVG_CHECK + '</span> <span>' + I18n.t('output.success') + '</span>';
-        } else {
-            statusEl.className = 'terminal-status error';
-            statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span class="status-icon-fail">' + SVG_X + '</span> <span>' + I18n.t('output.failed') + '</span>';
+        if (statusEl) {
+            if (status === 'success') {
+                statusEl.className = 'terminal-status success';
+                statusEl.innerHTML = '<span class="run-id">' + Utils.escHtml(shownID) + '</span> <span class="status-icon-ok">' + SVG_CHECK + '</span> <span>' + I18n.t('output.success') + '</span>';
+            } else {
+                statusEl.className = 'terminal-status error';
+                statusEl.innerHTML = '<span class="run-id">' + Utils.escHtml(shownID) + '</span> <span class="status-icon-fail">' + SVG_X + '</span> <span>' + I18n.t('output.failed') + '</span>';
+            }
         }
 
         // Button back to "运行" for re-run
-        btn.textContent = I18n.t('btn.run');
-        btn.className = 'btn btn-primary btn-sm';
+        if (btn) {
+            btn.textContent = I18n.t('btn.run');
+            btn.className = 'btn btn-primary btn-sm';
+        }
         $('#btnCopyOutput').title = I18n.t('btn.copyOutput');
 
-        writeRunLog(task, command, status, output, duration, exitCode);
         loadLogs().then(function () { renderTasks(); });
     }
 
@@ -1106,83 +1338,24 @@
         if (outputEl) outputEl.scrollTop = outputEl.scrollHeight;
     }
 
-    // Python fallback used when jq is unavailable. Single top-level statement so it
-    // survives being passed through the shell; \n escapes become real newlines in exec().
-    var LOG_APPEND_PY = 'import json,sys,os;exec("' + [
-        'p,n=sys.argv[1],sys.argv[3]',
-        'try:',
-        ' d=json.load(open(p))',
-        'except Exception:',
-        ' d=[]',
-        'if not isinstance(d,list): d=[]',
-        'e=json.loads(sys.argv[2])',
-        "e['created_at']=n",
-        'd.append(e)',
-        'd=d[-1000:]',
-        "f=open(p+'.tmp','w')",
-        'json.dump(d,f,indent=2)',
-        'f.close()',
-        "os.chmod(p+'.tmp',0o600)",
-        "os.replace(p+'.tmp',p)"
-    ].join('\\n') + '")';
-
-    function writeRunLog(task, command, status, output, durationMs, exitCode) {
-        var logFile = '/opt/cronplus/logs/task_' + task.id + '.json';
-        var entry = {
-            run_id: currentRunID || generateRunID(task),
-            task_id: task.id,
-            title: task.title || '',
-            command: command,
-            status: status,
-            output: (output || '').slice(0, 50000),
-            duration: durationMs,
-            exit_code: exitCode,
-            attempt: 1,
-            trigger: 'manual',
-            run_user: task.run_user || 'root',
-            // Filled in on the server so the timestamp matches the daemon's local
-            // time instead of the browser's timezone (was off by the UTC offset).
-            created_at: ''
-        };
-        var entryJson = JSON.stringify(entry);
-        var safeLogFile = Utils.shellQuote(logFile);
-        // NOTE: the jq filter must stay single-quoted — inside double quotes bash
-        // expands $e and treats [$...] as arithmetic, so the entry was never appended.
-        var jqFilter = '. + [$e + {created_at: $now}] | .[-1000:]';
-        var jqCmd = 'jq --argjson e "$ENTRY" --arg now "$NOW" ' + Utils.shellQuote(jqFilter);
-        var script =
-            'LOG=' + safeLogFile + ' && mkdir -p "$(dirname "$LOG")" && ' +
-            'ENTRY=' + Utils.shellQuote(entryJson) + ' && ' +
-            'NOW=$(date "+%Y-%m-%d %H:%M:%S") && ' +
-            'PY=$(command -v python3 || command -v python) && ' +
-            'if command -v jq >/dev/null 2>&1; then ' +
-            '  if [ -s "$LOG" ]; then ' + jqCmd + ' "$LOG" > "$LOG.tmp"; ' +
-            '  else printf "[]" | ' + jqCmd + ' > "$LOG.tmp"; fi && ' +
-            '  mv -f "$LOG.tmp" "$LOG" && chmod 600 "$LOG"; ' +
-            'elif [ -n "$PY" ]; then ' +
-            '  "$PY" -c ' + Utils.shellQuote(LOG_APPEND_PY) + ' "$LOG" "$ENTRY" "$NOW"; ' +
-            'fi';
-        cockpit.spawn(
-            ['bash', '-c', script],
-            { err: 'ignore', environ: ['LC_ALL=C'] }
-        ).catch(function () {});
-    }
-
     function showTaskLogs(index) {
         var task = tasks[index];
         if (!task) return;
-        $$('.tab').forEach(function (t) { t.classList.remove('active'); });
-        $$('.tab-content').forEach(function (c) { c.classList.remove('active'); });
-        $$('.tab')[1].classList.add('active');
-        $('#tab-logs').classList.add('active');
+        selectTab('logs');
         logPage = 1;
-        $('#logFilterTask').value = String(task.id || '');
+        // Filter is driven by state, so it survives even when this task has no
+        // log entry (and therefore no <option> in the dropdown) yet.
+        logFilterTaskId = String(task.id || '');
         $('#logFilterStatus').value = '';
         $('#logFilterUser').value = '';
         $('#logFilterTrigger').value = '';
         $('#logDateFrom').value = '';
         $('#logDateTo').value = '';
         renderLogs();
+        // Pull this task's own history (deeper than the shared window) so the
+        // view is complete even when the last auto-refresh cached only a few
+        // entries, then re-render.
+        loadTaskLogs(task.id).then(function () { renderLogs(); });
     }
 
     function toggleTask(index) {
@@ -1365,6 +1538,10 @@
             var maxId = tasks.reduce(function (m, t) { return Math.max(m, t.id || 0); }, 0);
             data.id = maxId + 1;
             tasks.push(data);
+            // A new task is appended, so jump to the page it landed on —
+            // otherwise it is created on page 3 while the list shows page 1 and
+            // the click looks like it did nothing.
+            taskPage = Math.max(1, Math.ceil(tasks.length / TASK_PAGE_SIZE));
         }
 
         saveTasks();
@@ -1699,22 +1876,6 @@
     // ===== UI Helpers =====
     function showModal(show) { $('#taskModal').style.display = show ? 'flex' : 'none'; }
 
-    function generateRunID(task) {
-        // Manual run: #taskID-user-manual-xxxx
-        if (task) {
-            var user = task.run_user || 'root';
-            var hex = Math.floor(Math.random() * 0xFFFF).toString(16).padStart(4, '0');
-            return '#' + task.id + '-' + user + '-manual-' + hex;
-        }
-        // Fallback
-        var now = new Date();
-        var pad = function (n, w) { var s = String(n); while (s.length < w) s = '0' + s; return s; };
-        var ts = pad(now.getFullYear() % 100, 2) + pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2) +
-                 '-' + pad(now.getHours(), 2) + pad(now.getMinutes(), 2) + pad(now.getSeconds(), 2);
-        var hex = Math.floor(Math.random() * 0xFFFF).toString(16).padStart(4, '0');
-        return ts + '-' + hex;
-    }
-
     function showOutputModal(command, user) {
         var outputEl = $('#outputContent');
         var statusEl = $('#outputStatus');
@@ -1723,23 +1884,25 @@
         var copyBtn = $('#btnCopyOutput');
         var taskNameEl = $('#outputTaskName');
         var task = pendingRunTask;
-        currentRunID = generateRunID(task);
+        // No fake run id: the CLI allocates the real one and we read it back from
+        // its banner. Inventing one here meant the id in the header never matched
+        // the id in the log entry.
+        currentRunID = null;
         outputEl.textContent = '$ ' + command + '\n';
         statusEl.className = 'terminal-status';
-        statusEl.innerHTML = '<span class="run-id">' + currentRunID + '</span> <span class="trigger-badge-manual">[manual]</span> <span>' + (user || 'root') + '</span>';
+        statusEl.innerHTML = '<span class="trigger-badge-manual">[manual]</span> <span>' + Utils.escHtml(user || 'root') + '</span>';
         durationEl.textContent = '';
         btn.textContent = I18n.t('btn.run');
         btn.className = 'btn btn-primary btn-sm';
         copyBtn.title = I18n.t('btn.copyCommand');
         // Show task name in header
         if (taskNameEl) {
-            var task = pendingRunTask;
             var name = '';
-            if (task) name = task.title || task.command.split('\n')[0].slice(0, 60);
+            if (task) name = task.title || (task.command || '').split('\n')[0].slice(0, 60);
             taskNameEl.textContent = name ? '— ' + name : '';
         }
         runningProc = null;
-        runStartTime = 0;
+        activeRun = null;
         var stdinBar = $('#stdinBar');
         if (stdinBar) stdinBar.style.display = 'none';
         var stdinInput = $('#stdinInput');
@@ -1749,12 +1912,13 @@
 
     function closeOutputModal() {
         if (runningProc) {
-            try { runningProc.close('kill'); } catch (e) { /* */ }
+            // Mark it stopped and ask the CLI to shut down. It writes the log
+            // entry itself, so this still records the run.
+            if (activeRun) activeRun.stopped = true;
+            try { runningProc.close('terminate'); } catch (e) { /* */ }
             runningProc = null;
         }
-        if (runTimeoutTimer) { clearTimeout(runTimeoutTimer); runTimeoutTimer = null; }
         if (runDurationTimer) { clearInterval(runDurationTimer); runDurationTimer = null; }
-        runStartTime = 0;
         pendingRunTask = null;
         var stdinBar = $('#stdinBar');
         if (stdinBar) stdinBar.style.display = 'none';
@@ -1809,118 +1973,154 @@
         return checked ? checked.value : 'age';
     }
 
-    function filterLogsForCleanup() {
-        var mode = getCleanupMode();
-        var now = new Date();
-        if (mode === 'all') return logs.slice();
-        return logs.filter(function (l) {
-            if (mode === 'age') {
-                var days = parseInt($('#cleanupDays').value) || 30;
-                var cutoff = new Date(now.getTime() - days * 86400000);
-                var logDate = new Date((l.created_at || '').replace(/\//g, '-'));
-                return !isNaN(logDate.getTime()) && logDate < cutoff;
-            }
-            if (mode === 'count') return false;
-            if (mode === 'task') {
-                var taskId = $('#cleanupTaskId').value;
-                return taskId && String(l.task_id) === taskId;
-            }
-            if (mode === 'status') {
-                var status = $('#cleanupStatus').value;
-                return status && l.status === status;
-            }
-            if (mode === 'user') {
-                var user = $('#cleanupUser').value;
-                return user && (l.run_user || 'root') === user;
-            }
-            return false;
-        });
+    // Builds the `cronplus prune` selector for the chosen cleanup mode.
+    //
+    // The WebUI no longer decides on its own which entries die: it hands the
+    // same conditions to the CLI, so what the preview counts and what the
+    // command deletes are the same thing by construction. Returns null when the
+    // mode still needs a value the user has not picked.
+    function buildPruneArgs(mode) {
+        var args = ['cronplus', 'prune'];
+        if (mode === 'age') {
+            var days = parseInt($('#cleanupDays').value) || 30;
+            args.push('--before', Utils.formatDateTime(new Date(Date.now() - days * 86400000)));
+        } else if (mode === 'task') {
+            var tid = $('#cleanupTaskId').value;
+            if (!tid) return null;
+            args.push('--task', String(tid));
+        } else if (mode === 'status') {
+            var st = $('#cleanupStatus').value;
+            if (!st) return null;
+            args.push('--status', st);
+        } else if (mode === 'user') {
+            var user = $('#cleanupUser').value;
+            if (!user) return null;
+            args.push('--user', user);
+        } else if (mode === 'count') {
+            args.push('--keep', String(parseInt($('#cleanupCount').value) || 100));
+        }
+        return args;
     }
 
-    function filterLogsByCount() {
-        var keepN = parseInt($('#cleanupCount').value) || 100;
-        var byTask = {};
-        logs.forEach(function (l, i) {
-            var key = l.task_id || '__no_task__';
-            if (!byTask[key]) byTask[key] = [];
-            byTask[key].push(i);
-        });
-        var removeSet = {};
-        Object.keys(byTask).forEach(function (key) {
-            var indices = byTask[key];
-            if (indices.length > keepN) {
-                indices.slice(0, indices.length - keepN).forEach(function (idx) { removeSet[idx] = true; });
-            }
-        });
-        return logs.filter(function (_, i) { return removeSet[i]; });
+    // Asks the CLI how many entries the current mode would delete (--dry-run).
+    // Resolves to null when the daemon/store cannot be reached, so the dialog
+    // can still proceed without pretending a number it does not know.
+    function countCleanupServer(mode) {
+        var args = buildPruneArgs(mode);
+        if (!args) return Promise.resolve(null);
+        return cockpit.spawn(
+            args.concat(['--dry-run', '--json']),
+            { err: 'message', environ: ['LC_ALL=C'] }
+        ).then(function (raw) {
+            var r = {};
+            try { r = JSON.parse(raw || '{}') || {}; } catch (e) { r = {}; }
+            return typeof r.deleted === 'number' ? r.deleted : 0;
+        }).catch(function () { return null; });
     }
 
     function previewCleanup() {
         var mode = getCleanupMode();
-        var toRemove = mode === 'count' ? filterLogsByCount() : filterLogsForCleanup();
-        $('#cleanupPreviewCount').textContent = toRemove.length;
-        $('#cleanupPreviewTotal').textContent = logs.length;
+        var countEl = $('#cleanupPreviewCount');
+        var totalEl = $('#cleanupPreviewTotal');
         $('#cleanupPreview').style.display = 'flex';
+
+        // "Everything" is answered locally: that is a full wipe, not a selection.
+        if (mode === 'all') {
+            countEl.textContent = logs.length;
+            totalEl.textContent = logs.length;
+            return;
+        }
+
+        if (!buildPruneArgs(mode)) {
+            countEl.textContent = '0';
+            totalEl.textContent = logs.length;
+            return;
+        }
+
+        countEl.textContent = '…';
+        totalEl.textContent = logs.length;
+        countCleanupServer(mode).then(function (n) {
+            // Ignore a stale answer: the user may have switched mode while the
+            // dry run was in flight.
+            if (getCleanupMode() !== mode) return;
+            countEl.textContent = n === null ? '?' : n;
+        });
     }
 
-    function execCleanup() {
+    async function execCleanup() {
         var mode = getCleanupMode();
 
         if (mode === 'all') {
             if (!confirm(I18n.t('toast.cleanupConfirm', { count: logs.length }))) return;
-            cockpit.spawn(['cronplus', 'clear-logs'], { err: 'message', environ: ['LC_ALL=C'] }).then(function () {
+            try {
+                await cockpit.spawn(['cronplus', 'clear-logs'], { err: 'message', environ: ['LC_ALL=C'] });
                 logs = [];
                 renderLogs();
                 renderTasks();
                 closeCleanupModal();
                 showToast(I18n.t('toast.cleaned', { count: 'all' }), 'success');
-            }).catch(function (err) {
+            } catch (err) {
                 showToast(I18n.t('toast.cleanupFailed') + ': ' + (err.message || err), 'error');
-            });
+            }
             return;
         }
 
-        var toRemove = mode === 'count' ? filterLogsByCount() : filterLogsForCleanup();
-
-        if (toRemove.length === 0) {
+        var args = buildPruneArgs(mode);
+        if (!args) {
             showToast(I18n.t('toast.noCleanup'), 'info');
             return;
         }
-        if (!confirm(I18n.t('toast.cleanupConfirm', { count: toRemove.length }))) return;
 
-        // Group by task_id and clear per-task
-        var taskIds = new Set();
-        toRemove.forEach(function (l) { if (l.task_id) taskIds.add(l.task_id); });
+        // Confirm with the server's own count. The old flow pre-filtered the
+        // cached log window and then translated "delete these 5 entries" into
+        // `clear-logs <task>` — deleting that task's entire history, including
+        // everything the preview promised to keep.
+        var planned = await countCleanupServer(mode);
+        if (planned === 0) {
+            showToast(I18n.t('toast.noCleanup'), 'info');
+            return;
+        }
+        if (!confirm(I18n.t('toast.cleanupConfirm', { count: planned === null ? '?' : planned }))) return;
 
-        var promises = [];
-        taskIds.forEach(function (tid) {
-            promises.push(cockpit.spawn(['cronplus', 'clear-logs', String(tid)], { err: 'message', environ: ['LC_ALL=C'] }));
-        });
-
-        Promise.all(promises).then(function () {
-            return loadLogs();
-        }).then(function () {
+        try {
+            var raw = await cockpit.spawn(args.concat(['--json']), { err: 'message', environ: ['LC_ALL=C'] });
+            var result = {};
+            try { result = JSON.parse(raw || '{}') || {}; } catch (e) { result = {}; }
+            var deleted = typeof result.deleted === 'number' ? result.deleted : 0;
+            await loadLogs();
             renderLogs();
             renderTasks();
             closeCleanupModal();
-            showToast(I18n.t('toast.cleaned', { count: toRemove.length }), 'success');
-        }).catch(function (err) {
+            showToast(I18n.t('toast.cleaned', { count: deleted }), 'success');
+        } catch (err) {
             showToast(I18n.t('toast.cleanupFailed') + ': ' + (err.message || err), 'error');
-        });
+        }
     }
 
     // ===== Events =====
+    // Switches the visible tab by name.
+    //
+    // The log view used to be opened by index — `$$('.tab')[1].classList.add(...)`
+    // — which points at whatever happens to be second. Adding, removing or
+    // reordering a tab silently broke it.
+    function selectTab(name) {
+        $$('.tab').forEach(function (t) {
+            t.classList.toggle('active', t.dataset.tab === name);
+        });
+        $$('.tab-content').forEach(function (c) {
+            c.classList.toggle('active', c.id === 'tab-' + name);
+        });
+    }
+
     function bindEvents() {
         $$('.tab').forEach(function (tab) {
             tab.addEventListener('click', function () {
-                $$('.tab').forEach(function (t) { t.classList.remove('active'); });
-                $$('.tab-content').forEach(function (c) { c.classList.remove('active'); });
-                tab.classList.add('active');
-                $('#tab-' + tab.dataset.tab).classList.add('active');
-                if (tab.dataset.tab === 'logs') { logPage = 1; loadLogs().then(function () { renderLogs(); }); }
-                if (tab.dataset.tab === 'editor') loadRawEditor();
-                if (tab.dataset.tab === 'daemon') { loadDaemonLog(); startDaemonLogTimer(); }
-                if (tab.dataset.tab !== 'daemon') stopDaemonLogTimer();
+                var name = tab.dataset.tab;
+                selectTab(name);
+                if (name === 'logs') { logPage = 1; loadLogs().then(function () { renderLogs(); }); }
+                if (name === 'editor') loadRawEditor();
+                if (name === 'daemon') { loadDaemonLog(); startDaemonLogTimer(); }
+                if (name !== 'daemon') stopDaemonLogTimer();
             });
         });
 
@@ -1934,6 +2134,7 @@
             try {
                 await loadTasks();
                 await loadLogs();
+                await loadRunning();
                 renderTasks();
                 renderLogs();
                 showToast(I18n.t('toast.refreshed'), 'info');
@@ -1947,7 +2148,7 @@
         });
 
         $('#btnAddTask').addEventListener('click', addNewTask);
-        $('#searchInput').addEventListener('input', renderTasks);
+        $('#searchInput').addEventListener('input', function () { taskPage = 1; renderTasks(); });
         $('#btnCloseModal').addEventListener('click', function () { showModal(false); });
         $('#btnCancelModal').addEventListener('click', function () { showModal(false); });
         $('#btnSaveTask').addEventListener('click', saveTask);
@@ -2060,11 +2261,15 @@
         $('#importFile').addEventListener('change', function (e) { if (e.target.files.length > 0) { importConfig(e.target.files[0]); e.target.value = ''; } });
 
         $$('.preset-btn').forEach(function (btn) {
+            // The reset button has no preset; it is wired separately below.
+            // Binding it here too left it with a no-op listener that only ran
+            // to hit `return`.
+            var preset = btn.dataset.preset;
+            if (!preset) return;
             btn.addEventListener('click', function () {
                 $$('.preset-btn').forEach(function (b) { b.classList.remove('active'); });
                 btn.classList.add('active');
-                var p = btn.dataset.preset;
-                if (!p) return; // skip reset button (no data-preset)
+                var p = preset;
                 if (p === '@reboot') {
                     $('#cronSec').value = '0'; $('#cronMin').value = p;
                     $('#cronHour').value = ''; $('#cronDay').value = '';
@@ -2145,6 +2350,7 @@
             var action = btn.dataset.action, index = parseInt(btn.dataset.index);
             switch (action) {
                 case 'run': runTask(index); break;
+                case 'stop': stopTask(index); break;
                 case 'edit': editTask(index); break;
                 case 'delete': deleteTask(index); break;
                 case 'logs': showTaskLogs(index); break;
@@ -2159,10 +2365,12 @@
             var expand = e.target.closest('[data-expand]');
             if (expand) {
                 var entry = expand.closest('.log-entry');
+                var opening = !entry.classList.contains('expanded');
                 entry.classList.toggle('expanded');
                 var toggle = expand.querySelector('.log-expand-toggle');
                 toggle.innerHTML = entry.classList.contains('expanded') ?
                     SVG_CHEVRON_UP + ' ' + I18n.t('log.collapse') : SVG_CHEVRON_DOWN + ' ' + I18n.t('log.expand');
+                if (opening) loadLogOutput(entry);
             }
             var copyBtn = e.target.closest('.btn-copy');
             if (copyBtn) {
@@ -2186,7 +2394,12 @@
 
         ['logFilterTask', 'logFilterStatus', 'logFilterUser', 'logFilterTrigger'].forEach(function (id) {
             var el = $('#' + id);
-            if (el) el.addEventListener('change', function () { logPage = 1; renderLogs(); });
+            if (!el) return;
+            el.addEventListener('change', function () {
+                if (id === 'logFilterTask') logFilterTaskId = el.value || '';
+                logPage = 1;
+                renderLogs();
+            });
         });
         ['logDateFrom', 'logDateTo'].forEach(function (id) {
             var el = $('#' + id);
@@ -2194,6 +2407,7 @@
         });
 
         $('#btnClearFilters').addEventListener('click', function () {
+            logFilterTaskId = '';
             $('#logFilterTask').value = '';
             $('#logFilterStatus').value = '';
             $('#logFilterUser').value = '';
@@ -2212,6 +2426,19 @@
         });
 
         $('#logPageSize').addEventListener('change', function () { logPage = 1; renderLogs(); });
+
+        $('#taskPaginationNav').addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-page]');
+            if (!btn || btn.disabled) return;
+            var page = parseInt(btn.dataset.page);
+            if (page >= 1) { taskPage = page; renderTasks(); }
+        });
+
+        $('#taskPageSize').addEventListener('change', function () {
+            TASK_PAGE_SIZE = parseInt($('#taskPageSize').value) || 20;
+            taskPage = 1;
+            renderTasks();
+        });
 
         // Cleanup Modal
         $('#btnCleanupLogs').addEventListener('click', function () { openCleanupModal(); });

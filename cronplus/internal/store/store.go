@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -18,13 +20,22 @@ const (
 
 // Store manages all file-based persistence.
 type Store struct {
-	ConfPath  string
-	LogDir    string
+	ConfPath     string
+	LogDir       string
 	SettingsPath string
-	StatePath string
+	StatePath    string
 
 	taskMu sync.RWMutex
 	logMu  sync.Mutex
+
+	// Tasks whose log file has already been checked for the legacy JSON-array
+	// format (guarded by logMu).
+	migrated map[int]bool
+
+	// In-memory cache of state.json, flushed periodically by the daemon.
+	stateMu    sync.Mutex
+	state      *DaemonState
+	stateDirty bool
 }
 
 func New(confPath, logDir string) *Store {
@@ -107,4 +118,39 @@ func writeJSON(path string, v interface{}) error {
 	}
 	data = append(data, '\n')
 	return atomicWrite(path, data)
+}
+
+// CleanupTempFiles removes leftover atomicWrite temp files. A crash (or a full
+// disk) can leave .tmp_* files behind in the config and log directories.
+func (s *Store) CleanupTempFiles() (int, error) {
+	dirs := []string{filepath.Dir(s.ConfPath), s.LogDir}
+	removed := 0
+	var firstErr error
+	cutoff := time.Now().Add(-time.Hour)
+
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasPrefix(e.Name(), ".tmp_") {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || info.ModTime().After(cutoff) {
+				continue
+			}
+			if err := os.Remove(filepath.Join(dir, e.Name())); err == nil {
+				removed++
+			}
+		}
+	}
+	return removed, firstErr
 }

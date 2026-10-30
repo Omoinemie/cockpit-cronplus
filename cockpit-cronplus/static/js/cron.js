@@ -84,7 +84,10 @@ var CronUtil = (function () {
                 var bp = base.split('-');
                 return value >= parseInt(bp[0]) && value <= parseInt(bp[1]) && (value - parseInt(bp[0])) % step === 0;
             }
-            return value === parseInt(base);
+            // "a/b" = from a, every b (Vixie cron). Must match the Go expander,
+            // otherwise the preview and the daemon disagree.
+            var start = parseInt(base);
+            return value >= start && (value - start) % step === 0;
         }
         return value === parseInt(spec);
     }
@@ -105,7 +108,11 @@ var CronUtil = (function () {
                     var bp = sm[1].split('-');
                     for (var v = parseInt(bp[0]); v <= parseInt(bp[1]); v += step) valSet[v] = true;
                 } else {
-                    valSet[parseInt(sm[1])] = true;
+                    // "a/b" = from a, every b (Vixie cron), same as the daemon.
+                    var start = parseInt(sm[1]);
+                    if (!isNaN(start)) {
+                        for (var v = start; v <= max; v += step) valSet[v] = true;
+                    }
                 }
                 return;
             }

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cronplus/pkg/model"
 )
 
 // Special schedules mapped to 6-field cron equivalents.
@@ -20,8 +22,14 @@ var specials = map[string][6]string{
 	"@hourly":   {"0", "0", "*", "*", "*", "*"},
 }
 
-// ParseSchedule parses a 5 or 6 field cron expression into [second, minute, hour, day, month, dow].
+// ParseSchedule parses a 5 or 6 field cron expression into
+// [second, minute, hour, day, month, dow]. Fields are validated strictly, so
+// an unparsable spec returns an error instead of silently degrading to "*".
 func ParseSchedule(schedule string) ([6]string, error) {
+	schedule = strings.TrimSpace(schedule)
+	if schedule == "" {
+		return [6]string{}, fmt.Errorf("empty schedule")
+	}
 	if strings.HasPrefix(schedule, "@") {
 		if schedule == "@reboot" {
 			return [6]string{}, fmt.Errorf("@reboot has no cron fields")
@@ -34,29 +42,128 @@ func ParseSchedule(schedule string) ([6]string, error) {
 	}
 
 	parts := strings.Fields(schedule)
+	var fields [6]string
 	switch len(parts) {
 	case 6:
-		return [6]string{parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]}, nil
+		fields = [6]string{parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]}
 	case 5:
-		return [6]string{"0", parts[0], parts[1], parts[2], parts[3], parts[4]}, nil
+		fields = [6]string{"0", parts[0], parts[1], parts[2], parts[3], parts[4]}
 	default:
 		return [6]string{}, fmt.Errorf("cron expression must have 5 or 6 fields, got %d", len(parts))
 	}
+
+	if err := model.ValidateSchedule(strings.Join(fields[:], " ")); err != nil {
+		return [6]string{}, err
+	}
+	return fields, nil
+}
+
+// Compiled is a cron expression parsed once and reused on every scheduling
+// loop iteration (the loop runs twice a second, so re-parsing every task each
+// time was pure waste).
+type Compiled struct {
+	Fields   [6]string
+	matchers [6]fieldMatcher
+	bad      bool
+}
+
+// Compile validates and pre-parses a schedule.
+func Compile(schedule string) (*Compiled, error) {
+	fields, err := ParseSchedule(schedule)
+	if err != nil {
+		return nil, err
+	}
+	c := &Compiled{Fields: fields}
+	for i := range fields {
+		_, minVal, maxVal := model.CronFieldRange(i)
+		c.matchers[i] = parseFieldMatcher(fields[i], minVal, maxVal)
+		if c.matchers[i].never {
+			c.bad = true
+		}
+	}
+	return c, nil
+}
+
+// Next returns the next matching time after `after`, or the zero time when the
+// expression can never match.
+func (c *Compiled) Next(after time.Time) time.Time {
+	return nextRunTime(c.Fields, c.matchers, after)
+}
+
+// NextFromAnchor calculates the next run time using an anchor-based approach
+// for step patterns, and verifies the result really matches every field.
+func (c *Compiled) NextFromAnchor(after time.Time, baseTimeStr string) time.Time {
+	if baseTimeStr == "" || c.bad {
+		return c.Next(after)
+	}
+	interval, hasStep := stepInterval(c.Fields)
+	if !hasStep {
+		return c.Next(after)
+	}
+	anchor, err := time.ParseInLocation("2006-01-02 15:04:05", baseTimeStr, after.Location())
+	if err != nil {
+		return c.Next(after)
+	}
+
+	candidate := anchor
+	if !anchor.After(after) {
+		elapsed := after.Sub(anchor)
+		periods := elapsed / interval
+		candidate = anchor.Add(periods * interval)
+		if !candidate.After(after) {
+			candidate = anchor.Add((periods + 1) * interval)
+		}
+	}
+	// The anchor maths only knows about the step field. A schedule such as
+	// `0 */5 9-17 * * *` must not fire at 18:05, so the candidate is checked
+	// against the other fields and falls back to the full search when it fails.
+	if c.matches(candidate) {
+		return candidate
+	}
+	return c.Next(after)
+}
+
+// matches reports whether t satisfies every field of the expression.
+func (c *Compiled) matches(t time.Time) bool {
+	if !c.matchers[0].Matches(t.Second()) ||
+		!c.matchers[1].Matches(t.Minute()) ||
+		!c.matchers[2].Matches(t.Hour()) ||
+		!c.matchers[3].Matches(t.Day()) ||
+		!c.matchers[4].Matches(int(t.Month())) {
+		return false
+	}
+	if c.matchers[5].Matches(int(t.Weekday())) {
+		return true
+	}
+	// Both 0 and 7 mean Sunday.
+	return t.Weekday() == time.Sunday && c.matchers[5].Matches(7)
 }
 
 // NextRunTime finds the next time after 'after' that matches the cron fields.
 // Uses field-level skipping for O(1) performance on most schedules.
 func NextRunTime(fields [6]string, after time.Time) time.Time {
+	c, err := Compile(strings.Join(fields[:], " "))
+	if err != nil {
+		return time.Time{}
+	}
+	return c.Next(after)
+}
+
+func nextRunTime(fields [6]string, matchers [6]fieldMatcher, after time.Time) time.Time {
+	if matchers[0].never || matchers[1].never || matchers[2].never ||
+		matchers[3].never || matchers[4].never || matchers[5].never {
+		return time.Time{}
+	}
+
+	secMatcher := matchers[0]
+	minMatcher := matchers[1]
+	hourMatcher := matchers[2]
+	dayMatcher := matchers[3]
+	monthMatcher := matchers[4]
+	dowMatcher := matchers[5]
+
 	current := after.Truncate(time.Second).Add(time.Second)
 	maxCheck := current.AddDate(2, 0, 0) // 2 years lookahead
-
-	// Pre-parse fields into structured matchers for efficient iteration
-	secMatcher := parseFieldMatcher(fields[0], 0, 59)
-	minMatcher := parseFieldMatcher(fields[1], 0, 59)
-	hourMatcher := parseFieldMatcher(fields[2], 0, 23)
-	dayMatcher := parseFieldMatcher(fields[3], 1, 31)
-	monthMatcher := parseFieldMatcher(fields[4], 1, 12)
-	dowMatcher := parseFieldMatcher(fields[5], 0, 7)
 
 	// Limit iterations as safety net (should rarely hit this)
 	maxIterations := 366 * 24 * 60 // ~1 year of minutes
@@ -81,8 +188,6 @@ func NextRunTime(fields [6]string, after time.Time) time.Time {
 		// Check day + dow (OR logic when both specified)
 		dayMatch := dayMatcher.Matches(current.Day())
 		dowVal := int(current.Weekday()) // 0=Sunday, 1=Monday, ..., 6=Saturday
-		// BUG FIX: Check both 0 and 7 for Sunday (cron standard allows both 0 and 7 for Sunday)
-		// Previously, the code converted Sunday(0) to 7, which broke DOW=0 matching.
 		dowMatch := dowMatcher.Matches(dowVal)
 		if !dowMatch && dowVal == 0 {
 			// Also check 7 for Sunday (cron convention: both 0 and 7 = Sunday)
@@ -159,6 +264,7 @@ func NextRunTime(fields [6]string, after time.Time) time.Time {
 // fieldMatcher provides efficient matching and next-value lookup for a cron field.
 type fieldMatcher struct {
 	isWildcard bool
+	never      bool // spec was unparsable: match nothing rather than everything
 	minVal     int
 	maxVal     int
 	values     []int // sorted list of valid values
@@ -180,8 +286,10 @@ func parseFieldMatcher(spec string, minVal, maxVal int) fieldMatcher {
 	}
 
 	fm.values = sortedKeys(valSet)
+	// An empty value set must never be treated as "*": that turned a typo like
+	// `*/0` into "every second".
 	if len(fm.values) == 0 {
-		fm.isWildcard = true
+		fm.never = true
 	}
 	return fm
 }
@@ -213,7 +321,12 @@ func expandFieldPart(part string, minVal, maxVal int, valSet map[int]bool) {
 		if err != nil {
 			return
 		}
-		valSet[v] = true
+		// "a/b" means "from a, every b" (Vixie cron), not "only a".
+		// Treating it as a single value made `5/10 * * * * *` fire once every
+		// hour at second 5 instead of every 10 seconds.
+		for x := v; x <= maxVal; x += step {
+			valSet[x] = true
+		}
 		return
 	}
 
@@ -236,6 +349,9 @@ func expandFieldPart(part string, minVal, maxVal int, valSet map[int]bool) {
 }
 
 func (fm fieldMatcher) Matches(value int) bool {
+	if fm.never {
+		return false
+	}
 	if fm.isWildcard {
 		return true
 	}
@@ -335,31 +451,12 @@ func stepInterval(fields [6]string) (time.Duration, bool) {
 //	anchor + ceil((now - anchor) / interval) * interval
 //
 // This ensures consistent intervals regardless of month/day boundaries.
-// For non-step fields (or if the anchor is invalid), it falls back to NextRunTime.
+// The candidate is checked against the remaining fields; when it does not match
+// (e.g. `0 */5 9-17 * * *` at 18:05) the full search is used instead.
 func NextRunTimeFromAnchor(fields [6]string, after time.Time, baseTimeStr string) time.Time {
-	if baseTimeStr == "" {
-		return NextRunTime(fields, after)
-	}
-
-	interval, hasStep := stepInterval(fields)
-	if !hasStep {
-		return NextRunTime(fields, after)
-	}
-
-	anchor, err := time.ParseInLocation("2006-01-02 15:04:05", baseTimeStr, after.Location())
+	c, err := Compile(strings.Join(fields[:], " "))
 	if err != nil {
-		return NextRunTime(fields, after)
+		return time.Time{}
 	}
-
-	if !anchor.After(after) {
-		elapsed := after.Sub(anchor)
-		periods := elapsed / interval
-		candidate := anchor.Add(periods * interval)
-		if !candidate.After(after) {
-			candidate = anchor.Add((periods + 1) * interval)
-		}
-		return candidate
-	}
-
-	return anchor
+	return c.NextFromAnchor(after, baseTimeStr)
 }
